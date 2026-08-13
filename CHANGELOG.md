@@ -1,15 +1,13 @@
 # Changelog
 
-## Unreleased
-
-<!-- Rename this heading to the version when cutting the release — scripts/bump-version.sh
-     warns if CHANGELOG.md has no entry matching the new version. -->
+## 1.9.34-alpha7
 
 ### ⚠️ Upgrading to this build requires reinstalling dependencies
 
-Both changes below alter `server/package.json`, so **`npm ci --omit=dev` is required, not
-optional** — in both directions. The runbook's rollback step marks that command "only if
-dependencies changed"; for this release they did.
+The two dependency changes below — dropping `sharp` and pinning `better-sqlite3` — alter
+`server/package.json`, so **`npm ci --omit=dev` is required, not optional** — in both directions.
+The runbook's rollback step marks that command "only if dependencies changed"; for this release
+they did.
 
 - **Upgrading**: `scripts/upgrade.sh` already runs it. A hand-rolled deploy that skips it leaves a
   `better-sqlite3` that no longer matches `package.json`.
@@ -22,6 +20,23 @@ dependencies changed"; for this release they did.
 Docker deployments need no action either way: dependencies are installed inside the image.
 
 No migrations, no configuration changes, no player-side changes.
+
+### Fixed — the Android player could leave a band down one edge of the screen
+A panel would sometimes not fill its display: content rendered into a stage sized from a window that
+no longer existed, leaving a bar the exact size of the hidden system bar. It was intermittent
+because it depended on whether the app was measured before or after the system UI was hidden — the
+same screen could come up correct after a reboot and wrong after an app restart.
+
+The stage is now measured from the current window and re-measured when focus changes, so a late
+change to the usable area is picked up instead of being baked in at startup.
+
+Reported on an RK356x Android box, where it was compounded by an unrelated HDMI mode problem;
+pinning the output resolution fixed the corruption, and this fixes the band that remained.
+
+### Added — an operations runbook
+`docs/operations.md`. How to deploy, verify, and roll back an instance in both shapes it runs in
+(git + systemd, and Docker), including what to back up first, how to tell a deploy actually worked,
+and the traps that are only obvious once they have bitten you.
 
 ### Changed — image processing no longer uses a native module
 `sharp` is gone. Thumbnailing and image measurement are pure JavaScript (Jimp) with WebAssembly
