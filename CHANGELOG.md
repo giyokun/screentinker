@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.9.34-alpha8
+
+### Fixed — an APK download with no external storage went nowhere, silently
+A panel could not install an update by OTA **or** by the dashboard's "Push an APK" button. Both
+staged the download in `getExternalFilesDir()`, which returns null when external storage is
+unavailable — not exotic on signage hardware: no emulated volume, a vendor ROM that never mounts
+one, an ejected card, storage still unmounted early in boot. A null parent silently produces a
+*relative* path, so the download was written to the process working directory, which is not
+writable. The write failed and the panel reported only "failed to download or failed signature
+verification".
+
+Every signal pointed away from the cause: the HTTP request succeeds (the server records a served
+download at the exact second of each failure), the signing key is fine, and because nothing is ever
+written there is no partial file to find. It also never recovers — every attempt fails the same way.
+
+Downloads now fall back to internal storage, which cannot be unmounted.
+
+⚠️ **This cannot repair a panel already affected.** The broken download path is the delivery
+mechanism, and the Push APK button shared the bug, so a panel in this state needs one manual install
+to escape it. The release protects panels that are not yet affected.
+
 ## 1.9.34-alpha7
 
 ### ⚠️ Upgrading to this build requires reinstalling dependencies
