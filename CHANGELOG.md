@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.34-alpha9
+
+### Added — opt-in install statistics
+ScreenTinker cannot see how widely it is deployed, because self-hosted installs are private by
+design and should stay that way. A platform administrator is now asked, once, whether this install
+will share how many screens it runs.
+
+The whole payload is three fields — a random instance ID, the version, and the screen count — and
+nothing else: no hostnames, addresses, organization or user names, device names, content, or
+configuration. Settings → Install statistics shows the **actual payload this server would send**,
+generated live from its own data, alongside what it last really sent and when, so the claim can be
+checked rather than taken on trust. Full detail in [docs/telemetry.md](docs/telemetry.md).
+
+Off until enabled, and both answers are remembered — declining is permanent, so the prompt does not
+return after an update.
+
+The random ID exists only so repeat reports from one server count as one server. It makes a report
+pseudonymous rather than anonymous, which the wording says plainly. Because sharing is opt-in, any
+total published from this is a floor — "at least N screens" — never an estimate of the install base.
+
 ## 1.9.34-alpha8
 
 ### Fixed — an APK download with no external storage went nowhere, silently
