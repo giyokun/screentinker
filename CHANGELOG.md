@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.9.34-alpha12
+
+### Fixed — updates were refused as "already newer" from alpha10 onward
+The update check compared the prerelease part of a version as plain text, so "alpha11" sorted below
+"alpha8" — because "1" comes before "8". Every build from alpha10 on was therefore treated as older
+than alpha8 and alpha9, and the server refused to offer it while naming it as the latest version in
+the same reply. A player on those builds could not be moved forward at all, and nothing about the
+failure pointed at version ordering.
+
+Prerelease numbers are now compared as numbers. Ordinary precedence is unchanged: beta still comes
+after alpha, rc after beta, and a finished release still beats any prerelease of the same version.
+
+The BrightSign host package carried the same comparison and is fixed with it — there, a wrong
+answer replaces the script that starts the player.
+
 ## 1.9.34-alpha11
 
 ### Fixed — an update that will not install now says why
