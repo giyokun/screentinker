@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.9.34-alpha13
+
+### Fixed — a player that could not update, while downloading content perfectly well
+Updates were always written to external storage. On a player where that location exists but cannot
+be written to, the download failed the instant it began — before any data arrived — and reported
+only that it had failed to download or verify. Nothing pointed at a directory, and the same player
+was downloading and caching content without trouble the whole time, because content goes to
+internal storage.
+
+Updates now go to the first location that genuinely accepts them, starting with the player's own
+internal storage, which is always available. External storage is still used when it works, since
+the file remains there for a manual install. Each location is tested by writing to it rather than
+by asking whether it is writable — the previous check asked, was told yes, and the write then
+failed anyway.
+
+If no location works, the player now names every one it tried and why.
+
+⚠️ **A player already stuck cannot be rescued by this release.** The broken path is how updates
+arrive, and the "Push an APK" button used it too, so a player in that state needs one update
+installed by hand. Afterwards it recovers on its own and stays fixed.
+
 ## 1.9.34-alpha12
 
 ### Fixed — updates were refused as "already newer" from alpha10 onward
