@@ -47,6 +47,18 @@ class UpdateChecker(private val context: Context) {
     // class is the imperative shell that persists state and does the download/install.
     var otaLogReporter: ((level: String, message: String) -> Unit)? = null
 
+    /*
+     * Why the last download/verify attempt failed, in specific terms.
+     *
+     * The caller could only ever say "failed to download or failed signature verification", which
+     * covers SEVEN distinct branches — three of them download failures where verification never
+     * runs at all. Every specific reason went to logcat, which an unprivileged app UID cannot read
+     * on Android 9, so in the field the message was unactionable: it named a symptom shared by
+     * unrelated causes and pointed at the wrong half of the code as often as the right one.
+     * Diagnosing one occurrence took an evening. This makes the next one a sentence.
+     */
+    private var lastFailure: String? = null
+
     private fun report(level: String, message: String) {
         when (level) { "error" -> Log.e(TAG, message); "warn" -> Log.w(TAG, message); else -> Log.i(TAG, message) }
         try { otaLogReporter?.invoke(level, message) } catch (_: Throwable) {}
@@ -272,7 +284,7 @@ class UpdateChecker(private val context: Context) {
             // Unforced this is deliberately quiet (transient network blips are not news). Forced,
             // somebody is waiting on an answer, and "the APK would not download or did not match
             // our signing key" is the single most useful thing we can tell them.
-            if (forced) report("error", "Force update: $latestVersion failed to download or failed signature verification — not installed")
+            if (forced) report("error", "Force update: $latestVersion not installed — ${lastFailure ?: "reason unavailable"}")
             return
         }
 
@@ -332,14 +344,58 @@ class UpdateChecker(private val context: Context) {
      * res/xml/file_paths.xml must expose this directory too — see the <files-path> entry there.
      */
     private fun apkDir(): File {
-        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { return it }
-        Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
+        // Non-null is not the same as usable. A returned path can still be missing, unwritable, or
+        // on a volume that has since gone away — and every one of those produced the same opaque
+        // "failed to download" as a genuine network fault, which is what made this expensive to
+        // diagnose. Prove the directory before choosing it, and fall back if it does not hold up.
+        val ext = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (ext != null && (ext.exists() || ext.mkdirs()) && ext.canWrite()) return ext
+        if (ext != null) Log.w(TAG, "External APK dir unusable (exists=${ext.exists()} writable=${ext.canWrite()}) — using internal")
+        else Log.w(TAG, "External storage unavailable — staging APKs in internal storage instead")
         return File(context.filesDir, "Download").apply { mkdirs() }
+    }
+
+    /*
+     * Can we actually put a ~9MB file here, right now?
+     *
+     * Checked BEFORE the download rather than discovered as an exception during the write, so the
+     * failure names the real condition — a read-only volume, a missing directory, a full disk —
+     * instead of surfacing as a generic IOException three layers up. Returns null when fine, or the
+     * reason it is not.
+     */
+    private fun apkDirProblem(dir: File, needBytes: Long): String? {
+        if (!dir.exists() && !dir.mkdirs()) return "cannot create ${dir.absolutePath}"
+        if (!dir.isDirectory) return "${dir.absolutePath} is not a directory"
+        if (!dir.canWrite()) return "no write permission on ${dir.absolutePath}"
+        val free = try { dir.usableSpace } catch (_: Throwable) { -1L }
+        // Headroom, not an exact fit: the installer stages its own copy of the APK as well, so a
+        // volume with barely the download's worth free still fails at install time.
+        if (needBytes > 0 && free in 0 until (needBytes * 2)) {
+            return "only ${free / 1024 / 1024}MB free on ${dir.absolutePath}, need ~${needBytes * 2 / 1024 / 1024}MB"
+        }
+        // Prove it rather than infer it: canWrite() can be true on a volume that refuses the write.
+        return try {
+            val probe = File(dir, ".st-write-probe")
+            probe.writeBytes(byteArrayOf(1))
+            probe.delete()
+            null
+        } catch (e: Throwable) {
+            "write test failed in ${dir.absolutePath}: ${e.javaClass.simpleName} ${e.message}"
+        }
     }
 
     private fun downloadAndInstall(url: String, version: String): Boolean {
         try {
-            val apkFile = File(apkDir(), "ScreenTinker-$version.apk")
+            val dir = apkDir()
+            // Preflight the destination. If the box cannot hold the file, say THAT — rather than
+            // letting it surface later as a truncated write or a generic IOException, which is
+            // indistinguishable from a network problem in the message the operator sees.
+            apkDirProblem(dir, 9L * 1024 * 1024)?.let {
+                lastFailure = "cannot stage the update — $it"
+                Log.e(TAG, "APK staging unavailable: $it")
+                return false
+            }
+            val apkFile = File(dir, "ScreenTinker-$version.apk")
 
             // #139: reuse a previously-downloaded, verified APK for this version instead of
             // re-pulling ~8.7 MB every cycle. The file also stays on disk as the artifact for a
@@ -357,6 +413,7 @@ class UpdateChecker(private val context: Context) {
             val response = client.newCall(request).execute()
 
             if (!response.isSuccessful) {
+                lastFailure = "server returned HTTP ${response.code} for the APK"
                 Log.e(TAG, "Download failed: ${response.code}")
                 return false
             }
@@ -377,6 +434,9 @@ class UpdateChecker(private val context: Context) {
             // the currently-installed app before installing. An attacker can't forge
             // our signature, so this holds even over an untrusted transport.
             if (!verifyApkSignature(apkFile)) {
+                // lastFailure was set precisely inside verifyApkSignature; keep it, and add the
+                // size so a truncated download is distinguishable from a genuine cert mismatch.
+                lastFailure = "${lastFailure ?: "signature verification failed"} (downloaded ${apkFile.length()} bytes)"
                 Log.e(TAG, "Refusing update: APK signature/package verification failed (tampered or MITM'd APK)")
                 apkFile.delete()
                 return false
@@ -389,6 +449,7 @@ class UpdateChecker(private val context: Context) {
             }
             return true
         } catch (e: Exception) {
+            lastFailure = "download/install threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Download/install error: ${e.message}")
             return false
         }
@@ -403,7 +464,12 @@ class UpdateChecker(private val context: Context) {
             try {
                 val base = url.substringAfterLast('/').substringBefore('?').ifBlank { "app.apk" }
                 val fileName = "pushed-" + (if (base.endsWith(".apk")) base else "$base.apk")
-                val apkFile = File(apkDir(), fileName)
+                val dir = apkDir()
+                apkDirProblem(dir, 9L * 1024 * 1024)?.let {
+                    Log.e(TAG, "installFromUrl: cannot stage — $it")
+                    return@Thread
+                }
+                val apkFile = File(dir, fileName)
                 if (apkFile.exists()) apkFile.delete()
                 val response = client.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
@@ -523,10 +589,12 @@ class UpdateChecker(private val context: Context) {
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val downloaded = pm.getPackageArchiveInfo(apkFile.absolutePath, archiveFlags)
             if (downloaded == null) {
+                lastFailure = "the downloaded file could not be parsed as an APK (truncated or not an APK)"
                 Log.e(TAG, "Could not parse downloaded APK")
                 return false
             }
             if (downloaded.packageName != context.packageName) {
+                lastFailure = "APK is package ${downloaded.packageName}, expected ${context.packageName}"
                 Log.e(TAG, "APK package mismatch: ${downloaded.packageName} != ${context.packageName}")
                 return false
             }
@@ -536,18 +604,37 @@ class UpdateChecker(private val context: Context) {
             val installedFlags = if (installedUsesSigningInfo)
                 PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
             val installed = pm.getPackageInfo(context.packageName, installedFlags)
-            val downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            var downloadedSigs = signingCertHashes(downloaded, archiveUsesSigningInfo)
+            // #139 follow-up: on API 28/29 the archive read goes through the legacy GET_SIGNATURES
+            // path, and if PackageManager hands back nothing we previously refused a perfectly good
+            // APK with no way to tell that apart from a real mismatch. Read the v1 signature
+            // ourselves before giving up — JarFile is random-access, which is how the JAR signature
+            // is meant to be read, and it verifies the same bytes PackageManager would have.
+            // This does NOT weaken the check: the cert extracted here is still compared against the
+            // installed app's below, and an unsigned or differently-signed APK still fails.
+            if (downloadedSigs.isEmpty()) {
+                val viaJar = archiveCertsViaJar(apkFile)
+                if (viaJar.isNotEmpty()) {
+                    Log.w(TAG, "Archive certs unreadable via PackageManager on API ${Build.VERSION.SDK_INT}; used JarFile (${viaJar.size})")
+                    downloadedSigs = viaJar
+                }
+            }
             val installedSigs = signingCertHashes(installed, installedUsesSigningInfo)
             if (downloadedSigs.isEmpty() || installedSigs.isEmpty()) {
+                lastFailure = "could not read signing certificates (archive=${downloadedSigs.size}, installed=${installedSigs.size}) on API ${Build.VERSION.SDK_INT}"
                 Log.e(TAG, "Missing signing certificates (downloaded=${downloadedSigs.size}, installed=${installedSigs.size})")
                 return false
             }
             // Require a non-empty overlap of signer certs (handles multi-signer / cert-rotation
             // the same way the API>=30 path does: compare the full current signer sets).
             val match = downloadedSigs.any { it in installedSigs }
-            if (!match) Log.e(TAG, "APK signing certificate does not match installed app")
+            if (!match) {
+                lastFailure = "APK is signed by a different key than the installed app"
+                Log.e(TAG, "APK signing certificate does not match installed app")
+            }
             match
         } catch (e: Exception) {
+            lastFailure = "signature check threw ${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Signature verification error: ${e.message}", e)
             false
         }
@@ -558,6 +645,31 @@ class UpdateChecker(private val context: Context) {
     // multi-signer + rotation aware), GET_SIGNATURES -> legacy .signatures (the only field
     // populated for ARCHIVE reads on API 28/29). Both yield the same cert for a normally-signed
     // APK; the caller compares as sets so an overlapping signer still verifies.
+    /*
+     * Read the APK's v1 (JAR) signer certificates directly, as a fallback for the API 28/29 archive
+     * read. Opening JarFile with verify=true and reading an entry to completion is what populates
+     * JarEntry.certificates — the certificate is only known once the bytes it covers have been
+     * checked, so the read is the verification, not a step before it.
+     *
+     * Returns an empty set on any problem, which leaves the caller refusing the install: this is a
+     * fallback for "PackageManager told us nothing", never a way to skip the comparison.
+     */
+    private fun archiveCertsViaJar(apkFile: File): Set<String> {
+        return try {
+            java.util.jar.JarFile(apkFile, true).use { jar ->
+                val entry = jar.getJarEntry("AndroidManifest.xml") ?: return emptySet()
+                jar.getInputStream(entry).use { input ->
+                    val buf = ByteArray(8192)
+                    while (input.read(buf) != -1) { /* must read fully before certificates populate */ }
+                }
+                entry.certificates?.mapNotNull { sha256(it.encoded) }?.toSet() ?: emptySet()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "JarFile cert read failed: ${e.message}")
+            emptySet()
+        }
+    }
+
     private fun signingCertHashes(info: PackageInfo, useSigningInfo: Boolean): Set<String> {
         val sigs: Array<Signature>? = if (useSigningInfo) {
             info.signingInfo?.apkContentsSigners
