@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.34-alpha10
+
+### Changed — install statistics report as soon as you opt in, and say when they cannot
+Turning sharing on now sends a report immediately rather than waiting for the next daily tick, and
+a failed attempt is recorded and explained. A server whose outbound traffic is filtered previously
+looked identical to one where the feature was broken: sharing on, nothing arriving, no way to tell
+which. Settings now names the address that did not answer and why, and a later success clears the
+warning.
+
+### Added — keep your own copy of the statistics
+`TELEMETRY_EXTRA_ENDPOINT` posts the same three fields to a collector you run.
+
+It is **additional, not a redirect** — the shared report still goes to ScreenTinker, which is why
+it is named EXTRA rather than ENDPOINT, and Settings lists every destination a report goes to. It
+is also independent of the sharing switch, because it is your server posting to your host: if you
+want your own statistics and nothing sent to us, set it and leave sharing off. Each destination is
+attempted separately, so one being unreachable never stops the other.
+
 ## 1.9.34-alpha9
 
 ### Added — opt-in install statistics
