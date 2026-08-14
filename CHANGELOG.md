@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.9.34-alpha11
+
+### Fixed — an update that will not install now says why
+A panel that failed to update reported only "failed to download or failed signature verification" —
+one sentence covering seven distinct causes, three of which are download failures where
+verification never runs. Every specific reason went to logcat, which an unprivileged app cannot
+read on Android 9, so in the field the message named a symptom shared by unrelated problems.
+
+The player now reports the actual cause: the HTTP status the server returned, how many bytes
+arrived, whether the signing certificates could be read at all, whether the key genuinely differs,
+or that the download could not be written and where.
+
+### Fixed — the destination is checked before downloading
+Nothing verified that the player could actually store the file. A directory path can be returned
+and still be missing, unwritable, on a volume that has gone away, or full — and all of those
+surfaced as the same opaque failure as a network fault. The player now proves the directory is
+writable (by writing to it, not by asking) and that there is room for the APK plus the copy the
+installer stages, before it starts.
+
+### Fixed — a readable APK is no longer refused on Android 9 and 10
+On those versions the archive's signing certificate comes from a legacy path that can return
+nothing, and the update was then refused with no way to distinguish that from a real mismatch. The
+player now reads the signature itself before giving up. Verification is unchanged: the certificate
+is still compared against the installed app, and anything unsigned, tampered with, or signed by a
+different key is still rejected.
+
 ## 1.9.34-alpha10
 
 ### Changed — install statistics report as soon as you opt in, and say when they cannot
