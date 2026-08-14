@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.34-alpha14
+
+The update fix from alpha13, confirmed over the air. A panel that had failed every update attempt
+for hours took this one unattended, in about seventy seconds, with no prompt on screen — the first
+successful over-the-air update on that hardware since the staging bug was introduced.
+
+### Added — Raspberry Pi notes in the operations runbook
+Three traps from a Pi 5 report, two of which are not Pi-specific: a piped installer cannot really
+ask you anything (the pipe is its input, so every prompt takes the default), X11 tools fail silently
+on Wayland (so screen blanking and cursor hiding can be entirely absent while appearing configured),
+and overlay filesystems protect an SD card by discarding writes — safe for a player, quietly
+destructive for a server whose database is written continuously.
+
 ## 1.9.34-alpha13
 
 ### Fixed — a player that could not update, while downloading content perfectly well
