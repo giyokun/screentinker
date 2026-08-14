@@ -1,405 +1,275 @@
 # Changelog
 
-## 1.9.34-alpha14
+## 1.9.34
 
-The update fix from alpha13, confirmed over the air. A panel that had failed every update attempt
-for hours took this one unattended, in about seventy seconds, with no prompt on screen — the first
-successful over-the-air update on that hardware since the staging bug was introduced.
+Single sign-on is the headline, rebuilt rather than extended — because of a vulnerability in what
+was there before. Alongside it: the last native image dependency is gone, several players that
+could not install updates now can, and an install can optionally report how many screens it runs.
 
-### Added — Raspberry Pi notes in the operations runbook
-Three traps from a Pi 5 report, two of which are not Pi-specific: a piped installer cannot really
-ask you anything (the pipe is its input, so every prompt takes the default), X11 tools fail silently
-on Wayland (so screen blanking and cursor hiding can be entirely absent while appearing configured),
-and overlay filesystems protect an SD card by discarding writes — safe for a player, quietly
-destructive for a server whose database is written continuously.
+No migrations and no configuration changes. See the upgrade note at the end of this entry.
 
-## 1.9.34-alpha13
+### Fixed — the old sign-in path could be replayed by any site you had signed into
+What shipped as "OAuth" verified almost nothing. It asked whether an **access** token was valid and
+then trusted the email address that came back, never asking the only question that matters: *who was
+this token issued for?* Any other site a user had signed into — anything holding a token with the
+right scope — could replay it against ScreenTinker and receive a session as that user. No password,
+no interaction from the victim.
 
-### Fixed — a player that could not update, while downloading content perfectly well
-Updates were always written to external storage. On a player where that location exists but cannot
-be written to, the download failed the instant it began — before any data arrived — and reported
-only that it had failed to download or verify. Nothing pointed at a directory, and the same player
-was downloading and caching content without trouble the whole time, because content goes to
-internal storage.
+Identity now comes from an **ID token only**, with the signature checked against the provider's
+keys and `iss`, `aud`, `azp`, `exp` and `nonce` all verified. One flow for every provider:
+Authorization Code with PKCE, completed server-side. Google and Microsoft became ordinary entries
+rather than hand-written special cases, which is what removed the two paths that were wrong.
 
-Updates now go to the first location that genuinely accepts them, starting with the player's own
-internal storage, which is always available. External storage is still used when it works, since
-the file remains there for a manual install. Each location is tested by writing to it rather than
-by asking whether it is writable — the previous check asked, was told yes, and the write then
-failed anyway.
+### Added — organizations bring their own single sign-on
+Instance-wide providers stay the default and are now unlimited in number. On top of that, an
+organization can connect its own identity provider — Entra, Okta, Auth0, Keycloak, anything speaking
+OpenID Connect — configured by that organization's own admins in Settings, with no operator
+involvement and no restart.
 
-If no location works, the player now names every one it tried and why.
+A provider may only assert addresses at domains the organization has **proved it controls**, via a
+TXT record at `_screentinker-verify.<domain>`. An unverified claim lapses after eight hours and
+releases the domain, so a typo cannot park someone else's domain indefinitely. A domain belongs to
+one organization only. Proof by delegated name (CNAME) is refused outright: it would need a wildcard
+zone we do not operate, and it would turn a subdomain takeover into an apex takeover.
 
-⚠️ **A player already stuck cannot be rescued by this release.** The broken path is how updates
-arrive, and the "Push an APK" button used it too, so a player in that state needs one update
-installed by hand. Afterwards it recovers on its own and stays fixed.
+An organization's provider never appears publicly. The login page reveals it only after someone
+enters an address at a verified domain, so a guessed domain cannot confirm who your customers are.
 
-## 1.9.34-alpha12
+**Require single sign-on** is available per organization: passwords refused, other providers
+refused, the instance's own Google and Microsoft buttons refused — otherwise "requires SSO" would
+just be renaming the bypass. Turning it *off* again needs a platform administrator to approve the
+request, so one compromised org admin cannot quietly reopen password login. Break-glass for a
+platform administrator is the correct password and nothing else, and a wrong password returns the
+same refusal everyone else gets, so it cannot be used to discover whether an account exists.
 
-### Fixed — updates were refused as "already newer" from alpha10 onward
-The update check compared the prerelease part of a version as plain text, so "alpha11" sorted below
-"alpha8" — because "1" comes before "8". Every build from alpha10 on was therefore treated as older
-than alpha8 and alpha9, and the server refused to offer it while naming it as the latest version in
-the same reply. A player on those builds could not be moved forward at all, and nothing about the
-failure pointed at version ordering.
+⚠️ **Enabling it clears the passwords** of members at verified domains. That is not reversible
+without a reset.
 
-Prerelease numbers are now compared as numbers. Ordinary precedence is unchanged: beta still comes
-after alpha, rc after beta, and a finished release still beats any prerelease of the same version.
+Entra sends no `email_verified` claim, which is why a Microsoft provider is trusted on other
+grounds: an instance-wide Microsoft entry is pinned to a single directory chosen by the operator,
+and an organization's own provider is believed once it has verified a domain — the DNS proof stands
+in for the claim, since whoever controls a domain's DNS controls its mail. A provider that has
+verified nothing assumes nothing, and an explicit `email_verified: false` is refused from anyone.
+Other providers that verify addresses without saying so can opt in with
+`OIDC_<SLUG>_ASSUME_EMAIL_VERIFIED=true`.
 
-The BrightSign host package carried the same comparison and is fixed with it — there, a wrong
-answer replaces the script that starts the player.
+**With no SSO environment variables set, the product behaves exactly as it did before.**
 
-## 1.9.34-alpha11
+### Added — an existing account can move to single sign-on
+Signing in with a provider has always refused to take over an account that already has a password,
+and that refusal is right — otherwise anyone who could persuade a provider to assert your address
+would inherit your account. But the way out had never been built, so an account created with a
+password simply could not use single sign-on.
 
-### Fixed — an update that will not install now says why
-A panel that failed to update reported only "failed to download or failed signature verification" —
-one sentence covering seven distinct causes, three of which are download failures where
-verification never runs. Every specific reason went to logcat, which an unprivileged app cannot
-read on Android 9, so in the field the message named a symptom shared by unrelated problems.
+**Settings → Sign-in method** now offers it, in both directions. An account has exactly **one**
+credential: linking **deletes** the password, and the confirmation says so, because a password left
+behind is a second way in that you believe you replaced. Unlinking asks for the new password first
+and applies both changes together, so the account is never left without a way in.
 
-The player now reports the actual cause: the HTTP status the server returned, how many bytes
-arrived, whether the signing certificates could be read at all, whether the key genuinely differs,
-or that the download could not be written and where.
+The account being linked is the one you are **signed in as**, never whichever account matches the
+address the provider returns — that is what separates linking from the takeover the login page
+refuses. Only providers configured on this server can be linked; an organization's own provider
+cannot attach itself to an account.
 
-### Fixed — the destination is checked before downloading
-Nothing verified that the player could actually store the file. A directory path can be returned
-and still be missing, unwritable, on a volume that has gone away, or full — and all of those
-surfaced as the same opaque failure as a network fault. The player now proves the directory is
-writable (by writing to it, not by asking) and that there is room for the APK plus the copy the
-installer stages, before it starts.
+### Changed — the login page asks who you are before how you sign in
+The password box appears once you have entered your address and continued, rather than sitting there
+from the start. That is what lets the page check whether your organization uses single sign-on
+*before* offering you a credential, so someone whose company requires it is shown that rather than a
+password box that was always going to be refused. Correcting your address takes you back a step.
 
-### Fixed — a readable APK is no longer refused on Android 9 and 10
-On those versions the archive's signing certificate comes from a legacy path that can return
-nothing, and the update was then refused with no way to distinguish that from a real mismatch. The
-player now reads the signature itself before giving up. Verification is unchanged: the certificate
-is still compared against the installed app, and anything unsigned, tampered with, or signed by a
-different key is still rejected.
+The address is no longer looked up on every keystroke — it answered for half-finished domains,
+changed the form under you mid-address, and could exhaust a shared office network's lookup budget
+before anyone had tried to sign in. The instance's own provider buttons stay visible throughout, so
+the page no longer changes shape while you type.
 
-## 1.9.34-alpha10
+Setup instructions for both operators and organization admins are in
+[docs/sso-setup.md](docs/sso-setup.md), written from configuring real Google and Entra applications
+— including the one that catches everyone: the Microsoft tenant setting names the directory that
+*authenticates the user*, which for personal accounts is not the directory the application is
+registered in.
 
-### Changed — install statistics report as soon as you opt in, and say when they cannot
-Turning sharing on now sends a report immediately rather than waiting for the next daily tick, and
-a failed attempt is recorded and explained. A server whose outbound traffic is filtered previously
-looked identical to one where the feature was broken: sharing on, nothing arriving, no way to tell
-which. Settings now names the address that did not answer and why, and a later success clears the
-warning.
+### Changed — image processing no longer needs a native library
+Thumbnails and image measurement are now pure JavaScript, with WebAssembly decoders for webp and
+avif, running on a worker thread. Nothing in the image path is a compiled binary any more, and
+`better-sqlite3` is the only native module left.
 
-### Added — keep your own copy of the statistics
-`TELEMETRY_EXTRA_ENDPOINT` posts the same three fields to a collector you run.
+A native module needs a prebuilt binary matching both the platform and the Node version; when there
+isn't one the server fails at load with an error that reads like database corruption rather than a
+missing image library. That class of failure is gone from this half of the product.
 
-It is **additional, not a redirect** — the shared report still goes to ScreenTinker, which is why
-it is named EXTRA rather than ENDPOINT, and Settings lists every destination a report goes to. It
-is also independent of the sharing switch, because it is your server posting to your host: if you
-want your own statistics and nothing sent to us, set it and leave sharing off. Each destination is
-attempted separately, so one being unreachable never stops the other.
+Format support is unchanged in practice: jpeg, png, gif, tiff and bmp decode directly, webp and avif
+through WebAssembly. `.heic` still produces no thumbnail — it never did, because the image library
+in use decodes AV1 but refuses HEVC.
 
-## 1.9.34-alpha9
+Decoding moved off the main thread deliberately. Pure JavaScript costs about a second for a
+12-megapixel photo, which in-process would stall everything else — and the thumbnail backfill walks
+an entire library at startup, which is exactly how a maintenance task turns into missed heartbeats
+and players marked offline. Thumbnailing is slower in wall-clock terms and no longer competes with
+serving requests.
 
-### Added — opt-in install statistics
-ScreenTinker cannot see how widely it is deployed, because self-hosted installs are private by
-design and should stay that way. A platform administrator is now asked, once, whether this install
-will share how many screens it runs.
+### Fixed — players that could not install an update
+Three separate faults, each able to strand a player on an old version.
 
-The whole payload is three fields — a random instance ID, the version, and the screen count — and
-nothing else: no hostnames, addresses, organization or user names, device names, content, or
-configuration. Settings → Install statistics shows the **actual payload this server would send**,
-generated live from its own data, alongside what it last really sent and when, so the claim can be
-checked rather than taken on trust. Full detail in [docs/telemetry.md](docs/telemetry.md).
+**Updates were written to external storage.** Where that location is absent, or exists but cannot be
+written to, the download failed the instant it began — before any data arrived — and reported only
+that it had failed to download or verify. The same player could be caching content perfectly well
+throughout, because content goes to internal storage. Updates now go to the first location that
+genuinely accepts them, starting with internal storage, and each candidate is tested by *writing to
+it* rather than by asking whether it is writable — the previous check asked, was told yes, and the
+write failed anyway.
 
-Off until enabled, and both answers are remembered — declining is permanent, so the prompt does not
-return after an update.
+**Prerelease versions were ordered as text**, so a build numbered 10 or higher sorted below one
+numbered 8 or 9. A player on such a build was told it was already up to date and could not be moved
+forward, while the server named the newer build as latest in the same reply. Numbers in version
+names are now compared as numbers. The BrightSign host package carried the same comparison and is
+fixed with it — there, a wrong answer replaces the script that starts the player.
 
-The random ID exists only so repeat reports from one server count as one server. It makes a report
-pseudonymous rather than anonymous, which the wording says plainly. Because sharing is opt-in, any
-total published from this is a floor — "at least N screens" — never an estimate of the install base.
+**A readable update was refused on Android 9 and 10**, where a downloaded file's signing certificate
+comes from a legacy path that can return nothing. The player now reads the signature itself before
+giving up. Verification is unchanged: the certificate is still compared against the installed app,
+and anything unsigned, tampered with, or signed by a different key is still rejected.
 
-## 1.9.34-alpha8
+A failed update now also says which of those things went wrong, instead of one message covering
+every possible cause.
 
-### Fixed — an APK download with no external storage went nowhere, silently
-A panel could not install an update by OTA **or** by the dashboard's "Push an APK" button. Both
-staged the download in `getExternalFilesDir()`, which returns null when external storage is
-unavailable — not exotic on signage hardware: no emulated volume, a vendor ROM that never mounts
-one, an ejected card, storage still unmounted early in boot. A null parent silently produces a
-*relative* path, so the download was written to the process working directory, which is not
-writable. The write failed and the panel reported only "failed to download or failed signature
-verification".
-
-Every signal pointed away from the cause: the HTTP request succeeds (the server records a served
-download at the exact second of each failure), the signing key is fine, and because nothing is ever
-written there is no partial file to find. It also never recovers — every attempt fails the same way.
-
-Downloads now fall back to internal storage, which cannot be unmounted.
-
-⚠️ **This cannot repair a panel already affected.** The broken download path is the delivery
-mechanism, and the Push APK button shared the bug, so a panel in this state needs one manual install
-to escape it. The release protects panels that are not yet affected.
-
-## 1.9.34-alpha7
-
-### ⚠️ Upgrading to this build requires reinstalling dependencies
-
-The two dependency changes below — dropping `sharp` and pinning `better-sqlite3` — alter
-`server/package.json`, so **`npm ci --omit=dev` is required, not optional** — in both directions.
-The runbook's rollback step marks that command "only if dependencies changed"; for this release
-they did.
-
-- **Upgrading**: `scripts/upgrade.sh` already runs it. A hand-rolled deploy that skips it leaves a
-  `better-sqlite3` that no longer matches `package.json`.
-- **Rolling back past this build**: the reinstall is **mandatory**. Earlier builds import `sharp` at
-  runtime to thumbnail images, and this build removes it from the production dependencies — so
-  rolling back the code without reinstalling leaves a server whose image ingest cannot load its
-  decoder. `lib/preflight-deps.js` catches this at boot and repairs it, but do not rely on that as
-  the plan.
-
-Docker deployments need no action either way: dependencies are installed inside the image.
-
-No migrations, no configuration changes, no player-side changes.
+⚠️ **A player already stuck cannot be rescued by this release**, because the broken path is how
+updates arrive and the "Push an APK" button used it too. Such a player needs one update installed by
+hand, after which it recovers on its own and stays fixed.
 
 ### Fixed — the Android player could leave a band down one edge of the screen
-A panel would sometimes not fill its display: content rendered into a stage sized from a window that
-no longer existed, leaving a bar the exact size of the hidden system bar. It was intermittent
-because it depended on whether the app was measured before or after the system UI was hidden — the
-same screen could come up correct after a reboot and wrong after an app restart.
-
-The stage is now measured from the current window and re-measured when focus changes, so a late
-change to the usable area is picked up instead of being baked in at startup.
+A panel would sometimes not fill its display, leaving a bar the exact size of the hidden system bar.
+It was intermittent because it depended on whether the app was measured before or after the system
+UI was hidden — the same screen could come up correct after a reboot and wrong after an app restart.
+The stage is now measured from the current window and re-measured when focus changes.
 
 Reported on an RK356x Android box, where it was compounded by an unrelated HDMI mode problem;
 pinning the output resolution fixed the corruption, and this fixes the band that remained.
 
+### Added — opt-in install statistics
+ScreenTinker cannot see how widely it is deployed, because self-hosted installs are private by
+design and should stay that way. A platform administrator is asked, once, whether this install will
+share how many screens it runs.
+
+The whole payload is three fields — a random instance ID, the version, and the screen count — and
+nothing else: no hostnames, addresses, organization or user names, device names, content or
+configuration. Settings shows the **actual payload this server would send**, generated live from its
+own data, alongside what it last really sent and when, so the claim can be checked rather than taken
+on trust. Turning it on reports immediately, and a blocked outbound connection is named along with
+the address to allow, rather than failing silently.
+
+Off until enabled, and both answers are remembered — declining is permanent, so the prompt does not
+return after an update. `TELEMETRY_EXTRA_ENDPOINT` posts the same three fields to a collector you
+run; it is **additional, not a redirect**, and independent of the sharing switch, so an operator who
+wants their own numbers and nothing sent to us can set it and leave sharing off.
+
+The random ID exists only so repeat reports from one server count as one server, which makes a
+report pseudonymous rather than anonymous — the wording says so plainly. Because sharing is opt-in,
+any total published from it is a floor, never an estimate of the install base. Full detail in
+[docs/telemetry.md](docs/telemetry.md).
+
+### Added — organizations may re-enable same-origin widgets, deliberately
+Widget isolation removed `allow-same-origin`, which also broke embedding for sites that enforce
+strict CORS. There is now an organization-level switch to put it back, behind a modal requiring a
+typed acknowledgement, with a persistent banner while it is on. It needs an organization owner or
+admin — a workspace admin is deliberately not enough — and the change is written to the activity
+log. Contributed by @ChrisChrome.
+
+The widget editor's **Preview is excluded** from that switch. Preview renders inside the dashboard
+where the admin's session token lives, so honouring the setting there would let anyone who can
+author a widget lift the session of whichever admin clicked Preview. The setting exists so
+*displays* can embed origin-strict sites; a display holds a device token, an admin's browser does
+not.
+
+### Fixed — RSS tickers ran at a speed that depended on how much news there was
+Scroll speed set a fixed total time for the whole strip to cross the screen regardless of length, so
+a feed with twenty items was dragged past in the same seconds as a feed with one — too fast to read,
+and it appeared to jump back to the start. It now holds a constant rate, so more items simply take
+proportionally longer and every item scrolls fully into and out of view. Contributed by @ChrisChrome.
+
+### Fixed — user-controlled text is escaped where it reaches the page
+An audit pass over the frontend's HTML sinks, escaping the ones that receive user-controlled data.
+Also here: dashboard banners no longer overlap the sidebar, shift the layout, or vanish when
+switching views, and the main content no longer collapses to a narrow column.
+
 ### Added — an operations runbook
-`docs/operations.md`. How to deploy, verify, and roll back an instance in both shapes it runs in
-(git + systemd, and Docker), including what to back up first, how to tell a deploy actually worked,
-and the traps that are only obvious once they have bitten you.
-
-### Changed — image processing no longer uses a native module
-`sharp` is gone. Thumbnailing and image measurement are pure JavaScript (Jimp) with WebAssembly
-codecs for webp and avif, running on a worker thread. `sharp` remains as a development dependency
-for test fixtures, so `--omit=dev` excludes it from a deployed install entirely.
-
-The motivation is that a native module needs a prebuilt binary matching both the platform and the
-Node ABI; when there isn't one, the failure arrives at load time and reads like database corruption
-rather than a missing image library. `better-sqlite3` is now the only native module left.
-
-Format support is unchanged in practice. jpeg, png, gif, tiff and bmp decode natively; webp and avif
-via WebAssembly. `.heic` still produces no thumbnail — it never did, because the `sharp` builds in
-use decode AV1 but refuse HEVC.
-
-Images are decoded on a worker thread rather than in-process. Pure-JavaScript decoding costs about a
-second for a 12-megapixel photo, which in-process would block the event loop — and the thumbnail
-backfill walks an entire library at boot, which is exactly how a maintenance task turns into missed
-heartbeats and players marked offline. Thumbnailing is slower in wall-clock terms than the native
-library was, and no longer competes with serving requests.
+[docs/operations.md](docs/operations.md): how to deploy, verify and roll back an instance in both
+shapes it runs in, what to back up first, how to upgrade Node.js safely, and the traps that are only
+obvious once they have bitten you — including three from a Raspberry Pi 5 report, two of which are
+not Pi-specific. A piped installer cannot really ask you anything, because the pipe is its input and
+every prompt takes the default. X11 tools fail silently on Wayland, so screen blanking and cursor
+hiding can be entirely absent while appearing configured. And an overlay filesystem protects an SD
+card by discarding writes — safe for a player, quietly destructive for a server whose database is
+written continuously.
 
 ### Changed — `better-sqlite3` pinned to 12.9.0
-Preparation for a future Node 22 upgrade, landed separately so the runtime move and the database
-driver move stay independently reversible.
+Preparation for a future Node.js 22 upgrade, landed separately so the runtime and the database
+driver can move independently rather than as one flag day.
 
 The pin is **exact on purpose**. 12.9.0 is the last release publishing prebuilt binaries for both
 the current and the next Node major; later 12.x releases dropped the older one while still
-advertising support for it in `engines`. A caret range would resolve to one of those and silently
-turn installation into a from-source compile. `lib/preflight-deps.js` explains this at the point
-anyone debugging the resulting failure would be reading.
+advertising support for it. A caret range would resolve to one of those and silently turn
+installation into a source build. Nothing in the query API changed.
 
-Nothing in the query API changed — every major since 9.x was bumped only to drop end-of-life Node
-and Electron versions.
+### ⚠️ Upgrading from 1.9.33 reinstalls dependencies
+This release changes `server/package.json`, so **`npm ci --omit=dev` is required, not optional** —
+in both directions.
 
-## 1.9.34-alpha6
+- **Upgrading**: `scripts/upgrade.sh` already runs it, and the server repairs a missed install at
+  startup where it can reach the npm registry.
+- **Rolling back past this release**: mandatory. Earlier builds load a native image library at
+  runtime that this release removes, so rolling back the code without reinstalling leaves a server
+  whose image ingest cannot load its decoder.
 
-### Added — a setup guide for single sign-on
-`docs/sso-setup.md`. The README explained what SSO is and listed the settings; it did not say where
-to click, which of several plausible values to use, or what a given failure means. The guide walks
-both the operator configuring Google or Microsoft for the whole instance and an organization admin
-bringing their own provider, and ends with a table of every error the sign-in can produce alongside
-what usually causes it.
+Docker deployments need no action either way; dependencies are installed inside the image.
 
-Written from configuring real Google and Entra applications rather than from the code, so the
-pitfalls in it are the ones that actually cost time — most of all that the Microsoft tenant setting
-names the directory that *authenticates the user*, which for personal accounts is not the directory
-the application is registered in.
+### Known limitations
+Deliberately unresolved, and worth knowing:
 
-## 1.9.34-alpha5
-
-### Fixed — the Link button in Settings always said "Authentication required"
-`alpha4` shipped account linking with a button that could never work. It navigated the browser
-straight at the link endpoint, and this app's session is a token held in the page rather than a
-cookie — so the request arrived with no credentials and was refused, every time.
-
-The page now asks the server for the sign-in URL first, using its session, and follows that. Nothing
-about the link itself changed.
-
-## 1.9.34-alpha4
-
-Two changes to how signing in works, both found by configuring real Google and Microsoft sign-in
-rather than by reading the code.
-
-### Added — an existing account can move to single sign-on
-Signing in with a provider has always refused to take over an account that already has a password.
-That refusal is right: otherwise anyone who could get a provider to assert your address would inherit
-your account. But the way out — sign in with your password, then link from Settings — had never been
-built, so it was a dead end. An account created with a password simply could not use single sign-on.
-
-**Settings → Sign-in method** now offers it. An account with a password can link one of the
-providers this server offers; an account on a provider can unlink back to a password.
-
-An account has exactly **one** credential. Linking **deletes** the password, and the confirmation
-says so plainly, because a password left behind is a second way in that you believe you replaced.
-Unlinking asks for the new password first and applies both changes together, so the account is never
-left, even briefly, with no way to sign in.
-
-The account being linked is the one you are **signed in as** — never whichever account matches the
-email the provider returns. That is what separates linking from the takeover the login page refuses.
-Only the providers configured on this server can be linked; an organization's own provider cannot
-attach itself to an account.
-
-### Changed — the login page asks who you are before how you sign in
-The password box now appears once you have entered your email address and continued, rather than
-sitting there from the start. That is what lets the page ask whether your organization uses single
-sign-on *before* offering you a credential: if it does, you are shown that instead of a password box
-that was going to be refused. Correcting your address takes you back a step so the answer matches
-what you actually typed.
-
-The address is no longer looked up on every keystroke. It answered for half-finished domains, changed
-the form under you mid-address, and could exhaust a shared office IP's lookup budget before anyone
-had tried to sign in.
-
-Google and Microsoft buttons now stay visible throughout, including for organizations that require
-their own provider. Such a login is still refused by the server; the page no longer changes shape
-while you type.
-
-## 1.9.34-alpha3
-
-Completes what `alpha2` half-fixed. That release made the operator's own Microsoft button work and
-left customers' Entra tenants broken, which is the wrong way round.
-
-### Fixed — a customer's own Entra tenant was refused after its domain went green
-An organization that brings its own Microsoft tenant publishes the DNS record, watches its domain
-verify, and was then refused at login with `email_unverified`. Entra sends no such claim, and an
-organization's provider was never allowed to assume one.
-
-The refusal fired *after* domain confinement had already passed, so it was not the domain check doing
-its job — it was a second check asking for something Microsoft does not emit. Requiring a claim a
-provider cannot send is not a security control; it is an outage.
-
-An organization's provider is now believed **once it has verified a domain**. The DNS proof is what
-stands in for the claim: whoever controls a domain's DNS controls its mail, which is the same trust
-that makes a verification link meaningful. A provider that has verified nothing still assumes
-nothing, domain confinement is unchanged, and an explicit `email_verified: false` is still refused
-from anyone.
-
-The assumption follows from the proof and is never a stored setting — an organization cannot switch
-it on for itself.
-
-## 1.9.34-alpha2
-
-Everything in `1.9.34-alpha1`, plus one fix without which the headline feature could not be used with
-Microsoft at all.
-
-### Fixed — Microsoft sign-in could never complete
-The login callback required the identity provider to assert `email_verified: true`. **Entra ID v2
-does not send that claim**, so a Microsoft login would authenticate correctly against the tenant and
-then be refused on the way back with `email_unverified`. Found while configuring a real Entra
-application, before a single sign-in was attempted; the SSO tests checked how the Microsoft issuer
-string is built but never put a Microsoft-shaped token through the policy.
-
-The strict check was itself a fix — an earlier version accepted an omitted claim — and it stays
-exactly as strict for a provider a **customer** configures, because such a provider is chosen by the
-party it vouches for and its bare assertion is worth nothing. What changed is recognising this as a
-question about *who was trusted* rather than about what the token contained: an instance-wide
-provider is chosen by the operator, and a Microsoft entry is pinned to a single tenant GUID, so only
-that directory can issue a token this server will accept.
-
-An explicit `email_verified: false` is still refused from anyone, and an organization's own provider
-can never make the assumption. Google is unchanged — it does send the claim.
-
-Other identity providers that verify addresses without saying so in the token can opt in with
-`OIDC_<SLUG>_ASSUME_EMAIL_VERIFIED=true`.
-
-### Fixed — documentation that would have cost you an afternoon
-`MICROSOFT_CLIENT_SECRET` is read by the server but was missing from the README table. The redirect
-URI must be registered under Entra's **Web** platform, not **SPA** — a SPA registration is rejected
-at the token endpoint, because this exchange runs server-side and sends no browser `Origin`. And the
-`email` optional claim has to be added under *Token configuration → ID*, or the token arrives with no
-address at all.
-
-## 1.9.34-alpha1
-
-**A prerelease, for the alpha instance.** It is not a production build and no display should be
-pulled onto it except deliberately: a prerelease sorts *below* its own release in semver, so a player
-that takes `1.9.34-alpha1` without being opted in will see `1.9.33` as newer and roll itself back.
-Opting a display in is what stops that.
-
-The headline is single sign-on, rebuilt from nothing — and the reason it was rebuilt rather than
-extended is a vulnerability in what was there before.
-
-### Fixed — the old sign-in path could be replayed by any site you had signed into
-What shipped as "OAuth" verified almost nothing. The Google path asked `tokeninfo` whether an
-**access** token was valid and then trusted the email address in the reply. The Microsoft path handed
-a bearer token to Graph `/me` and trusted that. Neither asked the only question that matters: *who
-was this token issued for?*
-
-So any other site a user had signed into — anything that had requested `email` or `User.Read` — held
-a token it could replay against ScreenTinker and receive a session as that user. No password, no
-interaction from the victim.
-
-Identity now comes from an **ID token only**, with signature checked against the provider's JWKS and
-`iss`, `aud`, `azp`, `exp` and `nonce` all verified. One flow for every provider: Authorization Code
-with PKCE, completed server-side. Google and Microsoft became ordinary entries rather than special
-cases, which is what removed the two hand-written paths that were wrong.
-
-### Added — organizations bring their own identity provider
-Instance-wide providers stay the default and are now unlimited in number. On top of that an
-organization may configure its own provider, but only for domains it has **proved it controls** — a
-TXT record at `_screentinker-verify.<domain>`. An unverified claim lapses after eight hours and
-releases the domain, so a typo cannot park someone else's domain indefinitely.
-
-Proof by delegated name (CNAME) is refused outright. It would have required a wildcard zone we do not
-operate, and worse, it would turn a subdomain takeover into an apex takeover.
-
-**SSO-only** is available per organization: passwords refused, other providers refused, the instance
-Google button refused. Turning it *off* again needs a platform admin to approve the request, so one
-compromised org admin cannot quietly reopen password login. Break-glass for a platform admin is the
-correct password and nothing else — and a wrong password returns the same 403 everyone else gets, so
-it cannot be used to discover whether an account exists.
-
-With no SSO environment variables set, the product behaves exactly as it did before. That was
-verified in a browser, not merely reasoned about.
-
-### Added — organizations may re-enable same-origin widgets, deliberately
-Widget isolation removed `allow-same-origin`, which also broke embedding for sites that enforce strict
-CORS. There is now an org-level switch to put it back, behind a modal that requires the operator to
-type an acknowledgement, with a persistent banner while it is on. Enabling it needs an organization
-owner or admin — a workspace admin is deliberately not enough — and the change is written to the
-activity log. Contributed by @ChrisChrome.
-
-The **widget editor's Preview is excluded** from that switch. Preview renders inside the dashboard,
-where the admin's session token lives, so honouring the setting there would have let anyone who can
-author a widget lift the session of whichever admin clicked Preview. The setting exists so *displays*
-can embed origin-strict sites; a display holds a device token, an admin's browser does not.
-
-### Fixed — RSS tickers ran at a speed that depended on how much news there was
-`scroll_speed` was wired straight into `animation-duration`, so it set a fixed total time for the
-whole strip to cross the screen regardless of length. A feed with twenty items was dragged past in
-the same seconds as a feed with one — too fast to read, and it appeared to jump back to the start.
-It now calibrates a constant pixels-per-second rate, so more items simply take proportionally longer
-and every item scrolls fully into and out of view. Contributed by @ChrisChrome.
-
-### Fixed — user-controlled text is escaped where it actually reaches HTML
-An audit pass over the frontend's HTML sinks, escaping the ones that receive user-controlled data.
-Also in this release: dashboard banners no longer overlap the sidebar, shift the layout or vanish
-when switching views, and the main content no longer collapses to a narrow column.
-
-### Known limitations in this alpha
-Deliberately not resolved yet, and worth knowing before testing against them:
-
-- Enabling SSO-only **clears the passwords** of members at verified domains. That is irreversible
+- Requiring single sign-on **clears the passwords** of members at verified domains, irreversibly
   without a reset.
-- The SSO-only removal queue is an availability dependency on the operator: if nobody approves, the
-  organization stays SSO-only.
+- Turning that requirement back off depends on a platform administrator approving the request; if
+  nobody does, the organization stays on single sign-on.
 - `landing.html` still interpolates plan names into HTML without escaping. Those values come from
   the plans table rather than from end users, so it is a loose end rather than an exposure.
-- `/api/provision` is limited to 5/min, so a twenty-display install day takes four minutes of waiting.
-  Pre-existing, unchanged by this release.
+- `/api/provision` is limited to 5 requests per minute, so a twenty-display install day involves
+  some waiting. Pre-existing and unchanged by this release.
+
+### Thanks
+This release — and a good deal of what came before it — exists because people outside the project
+reported problems and sent patches. Credit was recorded inconsistently at the time, so it is
+collected here rather than left scattered.
+
+**Code contributed**
+
+- **@ChrisChrome** — the organization-level widget sandbox toggle (#254) and the RSS ticker rate fix,
+  both in this release. Earlier: the Debian player/server install script (#137) and web player
+  auto-connect (#6).
+- **@BlazzzPlay** — eight merged pull requests across 1.9.4 to 1.9.13: server-side preview sessions
+  to work around CSP (#151), the Android hidden settings menu (#152), sending device identity on
+  reconnect before pairing (#164), the dashboard version indicator and update check (#165, #181),
+  authenticated thumbnail loading (#182), the server URL in the Add Display modal and the Releases
+  link on the APK download page (#210), and uploads respecting the current folder (#211).
+- **@a10kiloham** — boot-time thumbnail healing with ffmpeg diagnostics and packaging (#244), the
+  screenshot-request verdict toast and the reverse-proxy header pitfall it documented (#243), and a
+  configurable maximum upload size (#233).
+- **@albanobattistella** — the Italian translation, and its updates since (#2, #145, #232).
+
+**Reported**
+
+- **@carloblu74** — the Raspberry Pi 5 report behind #245, which found five defects in the installer
+  and kiosk launcher that nothing in this repository would have caught, because nothing here had ever
+  executed those scripts on a Pi. The runbook notes above come from it.
+- **@bold-media-group** — by a wide margin the largest source of field reports, across roughly fifty
+  issues: the OTA rollout and version-advertising problems, event-loop lag under long uptime, video
+  wall behaviour, Tizen playback regressions, and the content-loading failures that led to resumable
+  downloads.
+- **@Smiley-k**, **@Semetra22**, **@patrickfinardi09**, **@hapishyguy**, **@Nikhil12656**,
+  **@gittyguy92** and **@Obe-BoldMediaGroup** — bug reports and feature requests across the 1.9.x
+  line, including SMTP transport, playlist item scheduling, and the Android playlist-order fault
+  behind #234.
+
+Several of the hardest faults this year were found by someone running the product on hardware the
+project does not own. That is worth saying plainly.
 
 ## 1.9.33
 
