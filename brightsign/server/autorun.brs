@@ -53,14 +53,14 @@ Sub Main()
     ' server. Defaulting to on would mean every player that ever received this package started
     ' listening on 8181, and the mistake would be invisible until two of them fought over the same
     ' displays. A device with no config file, an unreadable one, or one that says 0 stays a player.
-    serverEnabled = ServerEnabled(root$)
-    print "[st-server] local server enabled: "; serverEnabled
+    serverFlag% = ServerEnabledFlag(root$)
+    print "[st-server] local server flag: "; serverFlag%
     ' Only three keys exist here: message_port, node_arguments, arguments. An invented `env:` key is
     ' what killed the first attempt at this file, with nothing but "Load or runtime error in
     ' autorun. Forcing recovery." to go on - and it sent me to the widget for the wrong reason.
     ' Anything the server needs to be told goes in DATA_DIR/server.env, which it reads itself.
     node = invalid
-    if serverEnabled then
+    if serverFlag% = 1 then
         node = CreateObject("roNodeJs", "bs-server-boot.js", { message_port: msgPort })
         if node = invalid then
             print "[st-server] FAILED: could not launch the node process"
@@ -84,7 +84,7 @@ Sub Main()
     ' Spelled out rather than casting the boolean: this file cannot be run anywhere but on the
     ' player, so it is not the place for a clever conversion nobody can check.
     serverParam$ = "0"
-    if serverEnabled then serverParam$ = "1"
+    if serverFlag% = 1 then serverParam$ = "1"
 
     ' NOTE what is NOT here: nodejs_enabled. The page no longer requires anything - it polls the
     ' server process over HTTP - so it can be an ordinary browser page. One less hybrid context.
@@ -133,38 +133,40 @@ End Sub
 
 
 '*******************************************************************************************
-Function ServerEnabled(root$ As String) As Boolean
+Function ServerEnabledFlag(root$ As String) As Integer
 '*******************************************************************************************
-    ' st-config.json on the storage root, e.g. {"server": 1}
+    ' Does st-config.json on the storage root say this device should host a server?
     '
-    ' Deliberately at the root rather than inside data/: it is what an operator drops in over the
-    ' DWS, and autozip never writes it, so a re-provision cannot silently switch a site's server
-    ' off - or on.
+    ' ⚠️ DELIBERATELY CRUDE, AND RETURNING AN INTEGER RATHER THAN A BOOLEAN.
     '
-    ' Absent, unparseable, or anything other than an affirmative value means DISABLED. There is no
-    ' reading of a broken config file that should end with a device deciding to host a server.
-    txt$ = ReadAsciiFile(root$ + "/st-config.json")
-    if txt$ = "" then return false
+    ' The first version parsed the file with ParseJSON and branched on type(): "Boolean",
+    ' "Integer", "roInt", "String". It cost a device a recovery loop -
+    '
+    '     Script runtime error: Type Mismatch. (runtime error &h18) in SSD:/autorun.brs(63)
+    '     Load or runtime error in autorun. Forcing recovery.
+    '
+    ' - because `if x then` demands a genuine Boolean and none of those branches reliably produced
+    ' one for a JSON 1. There is no BrightScript interpreter on the machine this was written on, so
+    ' every guess about types costs a boot cycle AND leaves the device looping through recovery.
+    '
+    ' A substring search cannot mismatch a type. It is less precise than a parser - a "server" key
+    ' inside some other string would fool it - but this file has exactly one job, the file it reads
+    ' is two lines long and written by us, and being unable to boot is far worse than being
+    ' imprecise about a malformed config.
+    '
+    ' Anything other than a clear yes returns 0. There is no reading of a broken config file that
+    ' should end with a device deciding to host a server.
+    t = ReadAsciiFile(root$ + "/st-config.json")
+    if type(t) <> "String" and type(t) <> "roString" then return 0
 
-    cfg = ParseJSON(txt$)
-    if cfg = invalid then
-        print "[st-server] st-config.json is not valid JSON - server stays disabled"
-        return false
-    end if
-    if type(cfg) <> "roAssociativeArray" then return false
+    low$ = LCase(t)
+    if Len(low$) = 0 then return 0
+    if Instr(1, low$, Chr(34) + "server" + Chr(34)) = 0 then return 0
 
-    v = cfg.server
-    if v = invalid then return false
-
-    ' Accept the shapes a human actually writes: 1, true, "1", "true", "yes", "on".
-    if type(v) = "Boolean" then return v
-    if type(v) = "Integer" then return v <> 0
-    if type(v) = "roInt" then return v <> 0
-    if type(v) = "String" or type(v) = "roString" then
-        low$ = LCase(v)
-        return low$ = "1" or low$ = "true" or low$ = "yes" or low$ = "on"
-    end if
-    return false
+    if Instr(1, low$, "true") > 0 then return 1
+    if Instr(1, low$, ": 1") > 0 then return 1
+    if Instr(1, low$, ":1") > 0 then return 1
+    return 0
 End Function
 
 '*******************************************************************************************
