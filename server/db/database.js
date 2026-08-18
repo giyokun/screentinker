@@ -1,6 +1,9 @@
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
+// NOT fs.copyFileSync: the data directory is exFAT on a player and copyFileSync's fchmod is
+// refused there, which killed the snapshot below and with it the server. See lib/fsutil.js.
+const { copyFileBytes } = require('../lib/fsutil');
 const config = require('../config');
 const { chunkedDelete, yieldTick, currentBand } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
 
@@ -37,7 +40,7 @@ function ensureMultitenancyMigration() {
   const snapshotPath = path.join(dbDir, `remote_display.pre-migration-${ts}.db`);
   try {
     db.pragma('wal_checkpoint(TRUNCATE)');
-    fs.copyFileSync(config.dbPath, snapshotPath);
+    copyFileBytes(config.dbPath, snapshotPath);
     console.warn(`[boot] Pre-migration snapshot: ${snapshotPath}`);
   } catch (e) {
     console.error(`[boot] Snapshot failed: ${e.message}`);
@@ -518,6 +521,12 @@ const migrations = [
   // Which physical output this row paints. A dual-output player runs one player per connector and
   // registers as two devices; without this they are indistinguishable in the dashboard.
   "ALTER TABLE devices ADD COLUMN output_index INTEGER",
+  // The attached panel's RAW EDID, base64. Stored raw and parsed on read (lib/edid.js) rather than
+  // exploded into columns: the blob is ~128-256 bytes, and every future field — gamma, the DTD mode
+  // list, the CEA blocks — then costs a server deploy instead of a migration AND a fleet update.
+  // That matters here more than usual: the bridge that collects it sits behind a CDN, and the host
+  // script only changes via an OTA package.
+  "ALTER TABLE devices ADD COLUMN hardware_edid TEXT",
   // What the player says it can do, as a JSON array (see lib/player-capabilities.js). NULL means
   // the panel has never declared — the overwhelming majority of the fleet on the day this ships —
   // and resolves to a per-platform baseline. That NULL is load bearing: an empty array is a player
@@ -1121,7 +1130,7 @@ function backfillPlaylistItemsZoneId() {
   const snapshotPath = path.join(dbDir, `remote_display.pre-zone-id-backfill-${ts}.db`);
   try {
     db.pragma('wal_checkpoint(TRUNCATE)');
-    fs.copyFileSync(config.dbPath, snapshotPath);
+    copyFileBytes(config.dbPath, snapshotPath);
     console.warn(`[zone-id backfill] Pre-migration snapshot: ${snapshotPath}`);
   } catch (e) {
     console.error(`[zone-id backfill] Snapshot failed: ${e.message}`);
@@ -1217,7 +1226,7 @@ const { applyTenantDeleteCascade } = require('../lib/tenant-cascade-migration');
   let snapped = false;
   try {
     db.pragma('wal_checkpoint(TRUNCATE)');
-    fs.copyFileSync(config.dbPath, snapshotPath);
+    copyFileBytes(config.dbPath, snapshotPath);
     snapped = true;
   } catch (e) {
     console.error(`[tenant-cascade] Snapshot failed: ${e.message}`);
