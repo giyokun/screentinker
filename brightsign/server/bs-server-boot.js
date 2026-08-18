@@ -475,8 +475,15 @@ try {
    * last printed, which is not a thing to hand to an unauthenticated caller on a network we do
    * not control.
    */
-  statusServer.listen(STATUS_PORT, '127.0.0.1',
-    () => remember('log', ['status listener on 127.0.0.1:' + STATUS_PORT]));
+  statusServer.listen(STATUS_PORT, '127.0.0.1', () => remember('log', [
+    'status listener on 127.0.0.1:' + STATUS_PORT +
+    ' - loopback only, it feeds THIS diagnostics screen (install progress, uptime, the log below)' +
+    // currentPort(), not a captured constant: server.env is read after this module is evaluated, so
+    // a value captured here would print the 3001 default rather than the port actually in use.
+    ' while the app on :' + currentPort() + ' is downloading, starting, or down. Not part of the' +
+    ' app; nothing' +
+    ' off-device can reach it.',
+  ]));
   if (statusServer.unref) statusServer.unref();
 } catch (e) {
   remember('error', ['could not start the status listener', String(e && e.message ? e.message : e)]);
