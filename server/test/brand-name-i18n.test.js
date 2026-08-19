@@ -85,16 +85,25 @@ test('the interpolation resolves, and falls back to the product name', async () 
   // i18n.js reads window.__ST_BRAND_NAME at CALL time, so branding.js can refresh it after first
   // paint and a workspace switch shows the new brand rather than the one cached at module load.
   const mod = path.join(I18N_DIR, '..', 'i18n.js');
-  // i18n.js reads the saved language from localStorage as it loads, so both browser globals have to
-  // exist before the import — not because this test cares about storage, but because the module
-  // would throw on the way in.
+  /*
+   * i18n.js reads the saved language from localStorage AND sniffs navigator.language as it loads,
+   * so both browser globals have to exist before the import — not because this test cares about
+   * either, but because the module throws on the way in without them.
+   *
+   * ⚠️ navigator is the one that bites: Node has had it as a global only since 21, so this passed
+   * locally on Node 24 and failed in CI on Node 20 with "navigator is not defined". Stubbing it
+   * explicitly makes the test independent of which Node happens to be running it.
+   */
   const store = new Map();
   globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
     setItem: (k, v) => store.set(k, String(v)),
     removeItem: (k) => store.delete(k),
   };
-  globalThis.window = { __ST_BRAND_NAME: undefined, localStorage: globalThis.localStorage };
+  const priorNavigator = globalThis.navigator;
+  if (!priorNavigator) globalThis.navigator = { language: 'en-US', languages: ['en-US'] };
+  globalThis.window = { __ST_BRAND_NAME: undefined, localStorage: globalThis.localStorage,
+                        navigator: globalThis.navigator };
   const { t } = await import(`file://${mod}`);
 
   const unbranded = t('settings.setup_step_1');
@@ -112,4 +121,5 @@ test('the interpolation resolves, and falls back to the product name', async () 
   assert.ok(t('settings.setup_step_1').includes('ScreenTinker'));
   delete globalThis.window;
   delete globalThis.localStorage;
+  if (!priorNavigator) delete globalThis.navigator;
 });
