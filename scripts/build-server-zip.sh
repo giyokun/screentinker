@@ -84,7 +84,7 @@ mkdir -p "$STAGE/server"
 # none of which the server reads at runtime.
 for p in server frontend scripts docs shared brightsign VERSION package.json; do
   git ls-files -z -- "$p" \
-    | grep -zZv -E '^server/(test|node_modules)/' \
+    | grep -zZv -E '^server/(test|node_modules)/|^brightsign/media-tools/' \
     | while IFS= read -r -d '' f; do
         mkdir -p "$STAGE/$(dirname "$f")"
         cp "$f" "$STAGE/$f"
@@ -97,6 +97,34 @@ cp brightsign/server/bs-server-boot.js  "$STAGE/bs-server-boot.js"
 cp brightsign/server/server.env.example "$STAGE/server.env.example"
 cp brightsign/server/node-server.html    "$STAGE/node-server.html"
 cp brightsign/autozip.brs               "$STAGE/autozip.brs"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# Media tools, at the top level as bin/ — where stageMediaTools() in bs-server-boot.js looks
+# (path.join(__dirname, 'bin', ...), and the payload installs INTO __dirname).
+#
+# PAYLOAD ONLY, deliberately. The boot zip is read by the OS's own zip reader at boot and a 73MB one
+# failed outright with "ZipArchive error"; it is ~64KB and stays that way. These ride with the
+# payload instead, which also means an update refreshes them.
+#
+# Shipped gzipped and stored (-0) rather than compressed, because they are already compressed —
+# 3.2MB here against 6.7MB unpacked, which is what /tmp pays at runtime.
+#
+# ⚠️ A hard error rather than a warning. Both files are tracked, so absence means someone removed
+# them, and the failure it would otherwise produce is a player that silently stops making video
+# thumbnails - exactly the silent degradation this whole path was built to end.
+if [ "$PAYLOAD_ONLY" = 1 ]; then
+  echo "  staging media tools..."
+  mkdir -p "$STAGE/bin"
+  for tool in ffprobe ffmpeg; do
+    src="brightsign/media-tools/$tool.gz"
+    if [ ! -f "$src" ]; then
+      echo "ERROR: $src is missing — the payload would ship without video thumbnails." >&2
+      exit 1
+    fi
+    cp "$src" "$STAGE/bin/$tool.gz"
+    echo "    bin/$tool.gz ($(du -h "$src" | cut -f1))"
+  done
 fi
 
 # Point the server at the built-in driver. The shim is API-compatible, so no call site changes —
@@ -335,7 +363,7 @@ echo "$LISTING" | tail -1 | sed 's/^/    /'
 REQUIRED="autorun.brs autozip.brs bs-server-boot.js node-server.html"
 # The payload is verified on the thing the installer actually looks for before it commits the
 # extraction. An archive that unpacks perfectly and lacks this is the failure worth catching here.
-[ "$PAYLOAD_ONLY" = 1 ] && REQUIRED="server/server.js"
+[ "$PAYLOAD_ONLY" = 1 ] && REQUIRED="server/server.js bin/ffprobe.gz bin/ffmpeg.gz"
 for required in $REQUIRED; do
   case "$LISTING" in
     *" $required"*) ;;
