@@ -46,6 +46,32 @@ const SERVER_DIR = path.join(__dirname, '..');
 const NODE_MODULES = path.join(SERVER_DIR, 'node_modules');
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;   // a cold install on a Pi is genuinely slow
 
+/**
+ * Which dependency names this host actually needs on disk.
+ *
+ * ⚠️ OPTIONAL IS NOT OPTIONAL WHERE THERE IS NOTHING TO FALL BACK TO.
+ *
+ * better-sqlite3 is an optionalDependency so a host with no compiler installs cleanly and lets
+ * db/sqlite-driver.js drop to the built-in node:sqlite. That only works on Node 24 (23.4+); on the
+ * 20.x and 22.x lines the built-in is absent or flagged off, and there a missing better-sqlite3 is
+ * a server that cannot start at all.
+ *
+ * npm will quietly skip an optional dependency whose install script it declines to run. Observed
+ * exactly that: `npm ci` reported success, left no better-sqlite3 on disk, and every test that
+ * spawns the server failed with "server did not boot" — with nothing anywhere saying why.
+ *
+ * Split out from missingDeps so the decision can be tested on either kind of host, rather than only
+ * on whichever Node happens to be running the suite.
+ *
+ * @param {{dependencies?: object, optionalDependencies?: object}} pkg
+ * @param {boolean} builtinDriver whether this runtime has node:sqlite
+ */
+function requiredDeps(pkg, builtinDriver) {
+  const names = Object.keys((pkg && pkg.dependencies) || {});
+  if (!builtinDriver) names.push(...Object.keys((pkg && pkg.optionalDependencies) || {}));
+  return names;
+}
+
 /** Which declared dependencies are not on disk. */
 function missingDeps() {
   let pkg;
@@ -54,7 +80,9 @@ function missingDeps() {
   } catch {
     return [];   // no package.json is not our problem to diagnose
   }
-  const declared = Object.keys(pkg.dependencies || {});
+  let builtinDriver = false;
+  try { require('node:sqlite'); builtinDriver = true; } catch { /* absent on this runtime */ }
+  const declared = requiredDeps(pkg, builtinDriver);
   return declared.filter((name) => {
     // A scoped or nested name is still one directory below node_modules.
     try { return !fs.existsSync(path.join(NODE_MODULES, name, 'package.json')); } catch { return true; }
@@ -237,4 +265,4 @@ function preflight() {
   }
 }
 
-module.exports = { preflight, missingDeps, nativeModuleBroken };
+module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps };

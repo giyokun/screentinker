@@ -90,3 +90,33 @@ test('server.js runs the preflight BEFORE requiring anything', () => {
   assert.ok(preflightAt > -1, 'server.js must run the preflight');
   assert.ok(preflightAt < firstDep, 'it must come before the first dependency, or it cannot help');
 });
+
+/*
+ * ⚠️ AN OPTIONAL DEPENDENCY IS NOT OPTIONAL ON A HOST WITH NO FALLBACK.
+ *
+ * better-sqlite3 became optional so a compiler-less host installs cleanly and drops to the built-in
+ * node:sqlite. But the built-in is Node 24 in practice — absent on 20.x, flagged off on 22.x — and
+ * this project's declared floor is 22.9. On those runtimes a missing better-sqlite3 is not a slower
+ * server, it is no server.
+ *
+ * This is not theoretical: `npm ci` on a machine that declines to run install scripts reported
+ * success, silently left no better-sqlite3 on disk, and every test that spawns the server failed
+ * with "server did not boot". Preflight has to notice and repair that.
+ */
+test('an optional dependency counts as required where node:sqlite is unavailable', () => {
+  const pkg = { dependencies: { express: '^4' }, optionalDependencies: { 'better-sqlite3': '12.9.0' } };
+
+  const withBuiltin = preflight.requiredDeps(pkg, true);
+  assert.deepEqual(withBuiltin, ['express'],
+    'on Node 24 the native driver is genuinely optional — the built-in can serve');
+
+  const withoutBuiltin = preflight.requiredDeps(pkg, false);
+  assert.deepEqual(withoutBuiltin.sort(), ['better-sqlite3', 'express'],
+    'on Node 20/22 a missing native driver means the server cannot start, so repair it');
+});
+
+test('requiredDeps copes with a package.json missing either section', () => {
+  assert.deepEqual(preflight.requiredDeps({}, false), []);
+  assert.deepEqual(preflight.requiredDeps({ optionalDependencies: { a: '1' } }, false), ['a']);
+  assert.deepEqual(preflight.requiredDeps({ dependencies: { b: '1' } }, false), ['b']);
+});

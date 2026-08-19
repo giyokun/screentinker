@@ -12,7 +12,18 @@ attribution, not the operator's own name, so on an instance branded "Acme" it of
 branding.
 
 It now reads "Hide platform branding", and the equivalent in the six other translated languages.
-Nothing else changed.
+
+### Fixed — a missing database driver is repaired again on Node 20 and 22
+
+1.9.38 made `better-sqlite3` an optional dependency, so that a host without a compiler installs
+cleanly and falls back to Node's built-in driver. That fallback needs Node 24: on the 20.x and 22.x
+lines the built-in is absent or behind a flag, and there a missing `better-sqlite3` means the server
+cannot start at all.
+
+npm will quietly skip an optional dependency whose install script it declines to run — leaving an
+install that reports success and a server that will not boot. The startup check now treats optional
+dependencies as required on any host that has no built-in driver, and repairs them like any other
+missing package.
 
 ### Upgrading
 
