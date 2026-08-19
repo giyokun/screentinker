@@ -69,18 +69,26 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: npm ci --omit=optional
-      - name: Assert the native driver really is absent
-        run: |
-          if [ -e node_modules/better-sqlite3 ]; then
-            echo "better-sqlite3 is installed — this job would silently test the WRONG driver" >&2
-            exit 1
-          fi
-      - name: Confirm the fallback is the one selected
+      # ⚠️ THE FULL TREE, then force the driver — NOT --omit=optional.
+      #
+      # The first version of this job installed without the native module, on the reasoning that a
+      # player has none. It failed instantly with 60 x "Cannot find module 'better-sqlite3'", because
+      # the TESTS require it directly as a harness to inspect the database they are asserting about.
+      # Removing it tests nothing except the test files.
+      #
+      # Forcing the driver is also the stronger check: the server under test runs on node:sqlite
+      # while the harness reads the same files with the native driver, so a divergence between the
+      # two shows up as a failing assertion rather than as agreement between one driver and itself.
+      - run: npm ci
+      - name: Confirm the fallback really is what the server picks here
         run: |
           node -e "const d=require('./db/sqlite-driver'); console.log(d.driverName);
-                   if (d.driverName !== 'node:sqlite') { console.error('expected the fallback'); process.exit(1); }"
+                   if (d.driverName !== 'node:sqlite') { console.error('expected the fallback, got ' + d.driverName); process.exit(1); }"
+        env:
+          ST_SQLITE_DRIVER: node
       - run: npm test
+        env:
+          ST_SQLITE_DRIVER: node
 
   openapi:
     name: OpenAPI spec lint
