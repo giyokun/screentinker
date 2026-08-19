@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.9.38
+
+A fix for anyone running the server on the display itself, and the white-label gaps a reseller
+reported.
+
+### Fixed — a player hosting its own server showed a black screen
+
+On a BrightSign running ScreenTinker for the screens around it, the player area was black once the
+first account existed. Nothing was broken in the player: the page and every one of its scripts
+loaded normally, and nothing appeared in any log.
+
+The device shows a local page that layers the player in a frame, and the server sends
+`X-Frame-Options: SAMEORIGIN`. That local page is served from `file://`, which is not the same
+origin, so the browser refused to draw the frame and left it black.
+
+The header is now dropped only when the server was started as a player host and the request came
+from the machine's own loopback interface. An ordinary server is unchanged, and so is any request
+arriving over the network — which is where clickjacking would have to come from.
+
+It also applies to what the player embeds, not only the player itself: browsers judge that rule
+against the top-level page, so widget and kiosk views inside a playlist would otherwise have gone
+black one level deeper.
+
+### Fixed — white-labelling left the product name in a dozen places
+
+Reported by a partner reselling the platform under their own brand (#292).
+
+**The APK download filename.** Downloads saved as `ScreenTinker.apk` regardless of branding, which
+told whoever received the file exactly what the upstream product was. It now uses the configured
+brand name, resolved from the domain the request arrived on, sanitised to something safe as both a
+filename and an HTTP header.
+
+**Users created by an administrator no longer ask to be verified.** They were created unverified, so
+they met a "Please confirm your email address" banner they could not dismiss — and on an instance
+with no mail server configured, could never clear. Nobody sends a verification link to an account an
+administrator provisioned.
+
+**Nine user-facing strings** — setup instructions, the empty-dashboard hint, onboarding, two sign-in
+errors — named the product directly and now use the configured brand, in all seven translated
+languages. An install with no brand set reads exactly as before.
+
+Three references were deliberately left as they are: the brand-name field's own placeholder, the
+explanation of what install statistics report to the upstream project, and the widget security
+warning.
+
+### Upgrading
+
+No migrations, no configuration changes, and nothing to do differently. Hosted and self-hosted
+installs are unaffected by the framing change unless they run the server on a player.
+
 ## 1.9.37
 
 Two fixes worth upgrading for on their own, and a change to how the server picks its database driver.
