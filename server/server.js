@@ -173,6 +173,51 @@ function corsOriginCheck(origin, callback) {
   callback(null, false);
 }
 
+
+/*
+ * ⚠️ FRAMING, WHEN THIS SERVER IS THE DISPLAY IT SERVES.
+ *
+ * A BrightSign hosting ScreenTinker shows a local page from `file:///ssd:/node-server.html` which
+ * layers the player in an iframe — an iframe rather than a navigation, because navigating would
+ * replace the document and kill the poller that notices the server dying, and an unexplained black
+ * screen is the exact failure that page exists to prevent.
+ *
+ * helmet sets X-Frame-Options: SAMEORIGIN, and file:// is not the same origin as
+ * http://127.0.0.1:8181, so the frame rendered BLACK while every asset inside it returned 200.
+ *
+ * ⚠️ AND IT IS NOT ONLY /player. Chrome evaluates SAMEORIGIN against the TOP-LEVEL document, not the
+ * immediate parent — so with a file:// page at the top, every iframe the player itself uses (widget
+ * renders, kiosk views, board renders) is blocked by the same rule, one level deeper. Scoping this
+ * to /player would have fixed the black screen and left every widget in the playlist black instead:
+ * the same bug, found later, on a customer's wall.
+ *
+ * Scoped by CONTEXT rather than by path. It applies only when the process was started as a player
+ * host (bs-server-boot.js sets ST_PLAYER_HOST; nothing else does) AND the request arrived on
+ * loopback — i.e. from the box's own browser. An ordinary server is untouched, and so is any request
+ * that came over the network, which is where clickjacking would have to come from: a remote page
+ * cannot reach another machine's 127.0.0.1.
+ */
+const PLAYER_HOST = ['1', 'true', 'yes']
+  .includes(String(process.env.ST_PLAYER_HOST || '').toLowerCase());
+
+function fromLoopback(req) {
+  const raw = req.ip || (req.socket && req.socket.remoteAddress) || '';
+  const ip = String(raw).replace(/^::ffff:/, '');
+  return ip === '127.0.0.1' || ip === '::1';
+}
+
+app.use((req, res, next) => {
+  if (!PLAYER_HOST || !fromLoopback(req)) return next();
+  res.removeHeader('X-Frame-Options');
+  // The CSP above is not applied to the render paths, but where it IS set its frame-ancestors would
+  // block this just as effectively. Rewrite only that directive and leave the rest of the policy.
+  const csp = res.getHeader('Content-Security-Policy');
+  if (typeof csp === 'string' && csp.includes('frame-ancestors')) {
+    res.setHeader('Content-Security-Policy', csp.replace(/frame-ancestors[^;]*/, 'frame-ancestors *'));
+  }
+  next();
+});
+
 app.use(cors({
   origin: corsOriginCheck,
   credentials: true,

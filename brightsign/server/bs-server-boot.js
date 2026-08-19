@@ -162,6 +162,13 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 process.env.DATA_DIR = DATA_DIR;
 
 /*
+ * Tell the server it is hosting the display it serves. The only thing this currently unlocks is
+ * letting the local diagnostic page frame /player over loopback — helmet's X-Frame-Options
+ * SAMEORIGIN otherwise renders that iframe black, because this page is served from file://.
+ */
+process.env.ST_PLAYER_HOST = '1';
+
+/*
  * Read at FRAME time, not at load time. server.env is applied below, after this module's constants
  * would have been evaluated — so a PORT captured here would show the default on screen while the
  * server was actually listening on the configured one. The screen exists to tell an operator where
