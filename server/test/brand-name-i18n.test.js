@@ -31,13 +31,22 @@ const BRANDED_KEYS = [
   'device.owner_provision.constraints',
   'device.terminal.welcome',
   'settings.signin_err_link_already_used',
-  'settings.hide_branding',
   'settings.setup_step_1',
   'settings.import.invalid_file',
   'onboarding.step.welcome.title',
 ];
 
 const localeFiles = () => fs.readdirSync(I18N_DIR).filter((f) => f.endsWith('.js'));
+
+/*
+ * ⚠️ DELIBERATELY NOT IN THE LIST ABOVE.
+ *
+ * settings.hide_branding used to read 'Hide "ScreenTinker" branding', and substituting the brand
+ * turned it into 'Hide "Acme" branding' on Acme's own instance — which is backwards: the toggle
+ * hides the PLATFORM's attribution, not the operator's own name. The reporter of #292 asked for
+ * generic wording instead, so this string names nobody at all.
+ */
+const GENERIC_KEY = 'settings.hide_branding';
 
 test('no locale hardcodes the product name in a white-labelled string', () => {
   const offences = [];
@@ -122,4 +131,16 @@ test('the interpolation resolves, and falls back to the product name', async () 
   delete globalThis.window;
   delete globalThis.localStorage;
   if (!priorNavigator) delete globalThis.navigator;
+});
+
+test('the hide-branding toggle names nobody', () => {
+  // Neither the upstream product (the original bug) nor the operator's own brand (which would read
+  // as "Hide Acme branding" on Acme's instance).
+  for (const file of localeFiles()) {
+    const src = fs.readFileSync(path.join(I18N_DIR, file), 'utf8');
+    const line = src.split('\n').find((l) => l.includes(`'${GENERIC_KEY}'`));
+    if (!line) continue;
+    assert.ok(!line.includes('ScreenTinker'), `${file}: ${GENERIC_KEY} still names the product`);
+    assert.ok(!line.includes('{brandName}'), `${file}: ${GENERIC_KEY} should be generic wording`);
+  }
 });

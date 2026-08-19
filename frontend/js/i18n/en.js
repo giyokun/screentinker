@@ -922,7 +922,7 @@ export default {
   'settings.custom_domain': 'Custom Domain',
   'settings.favicon_url': 'Favicon URL',
   'settings.custom_css': 'Custom CSS (optional)',
-  'settings.hide_branding': 'Hide "{brandName}" branding',
+  'settings.hide_branding': 'Hide platform branding',
   'settings.save_branding': 'Save Branding',
   'settings.preview': 'Preview',
   'settings.white_label_enterprise_only': 'Custom branding is available on the Enterprise plan',

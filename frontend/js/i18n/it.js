@@ -424,7 +424,7 @@ export default {
   'settings.custom_domain': 'Dominio Personalizzato',
   'settings.favicon_url': 'URL Favicon',
   'settings.custom_css': 'CSS Personalizzato (opzionale)',
-  'settings.hide_branding': 'Nascondi marchio "{brandName}"',
+  'settings.hide_branding': 'Nascondi il marchio della piattaforma',
   'settings.save_branding': 'Salva Marchio',
   'settings.preview': 'Anteprima',
   'settings.white_label_enterprise_only': 'Il marchio personalizzato è disponibile solo nel piano Enterprise',

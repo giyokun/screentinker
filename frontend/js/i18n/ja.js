@@ -846,7 +846,7 @@ export default {
   'settings.custom_domain': "カスタム ドメイン",
   'settings.favicon_url': "ファビコンURL",
   'settings.custom_css': "カスタム CSS (オプション)",
-  'settings.hide_branding': "「{brandName}」ブランドを非表示にする",
+  'settings.hide_branding': 'プラットフォームのブランドを非表示にする',
   'settings.save_branding': "ブランディングを保存",
   'settings.preview': "プレビュー",
   'settings.white_label_enterprise_only': "Enterprise プランではカスタム ブランドが利用可能です",

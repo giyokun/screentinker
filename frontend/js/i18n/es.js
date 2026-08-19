@@ -478,7 +478,7 @@ export default {
   'settings.custom_domain': 'Dominio personalizado',
   'settings.favicon_url': 'URL del favicon',
   'settings.custom_css': 'CSS personalizado (opcional)',
-  'settings.hide_branding': 'Ocultar la marca "{brandName}"',
+  'settings.hide_branding': 'Ocultar la marca de la plataforma',
   'settings.save_branding': 'Guardar branding',
   'settings.preview': 'Previsualizar',
   'settings.white_label_enterprise_only': 'El branding personalizado está disponible en el plan Enterprise',

@@ -448,7 +448,7 @@ export default {
   'settings.custom_domain': 'Benutzerdefinierte Domain',
   'settings.favicon_url': 'Favicon-URL',
   'settings.custom_css': 'Benutzerdefiniertes CSS (optional)',
-  'settings.hide_branding': '„{brandName}"-Branding ausblenden',
+  'settings.hide_branding': 'Plattform-Branding ausblenden',
   'settings.save_branding': 'Branding speichern',
   'settings.preview': 'Vorschau',
   'settings.white_label_enterprise_only': 'Benutzerdefiniertes Branding ist im Enterprise-Plan verfügbar',
