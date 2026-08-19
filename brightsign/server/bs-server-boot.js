@@ -367,8 +367,79 @@ process.on('unhandledRejection', (e) => remember('error', ['UNHANDLED REJECTION'
 const SERVER_ENTRY = path.join(__dirname, 'server', 'server.js');
 
 
+/*
+ * ---------------------------------------------------------------------------------------------
+ * Media tools (ffprobe/ffmpeg) — staged into /tmp, then put on PATH.
+ * ---------------------------------------------------------------------------------------------
+ *
+ * Without this the server logs, on every boot:
+ *
+ *     [MEDIA] ffmpeg, ffprobe not found on PATH — video thumbnails and durations are DISABLED
+ *
+ * ⚠️ /tmp IS NOT LAZINESS, IT IS THE ONLY OPTION. Every writable volume on this player is mounted
+ * noexec — the exFAT SSD, the ext4 flash, even /storage/tmp — and we run as uid 994 (nodejs), so
+ * `mount -o remount,exec` answers "permission denied (are you root?)". A symlink does not help
+ * either: noexec is a property of the filesystem holding the inode, not of the path used to reach
+ * it, so a link in /tmp pointing at flash still fails with EACCES. Copying is what moves the inode
+ * onto a filesystem that permits execution. /tmp is tmpfs and is the one writable place without
+ * noexec, so the binaries are unpacked there at every boot. They are shipped gzipped because the
+ * unpacked pair is ~7MB of RAM and the compressed pair is ~3MB on disk.
+ *
+ * ⚠️ THE BINARIES MUST BE OURS. BrightSignOS ships the whole ffmpeg 5.1 shared-library stack
+ * (libavformat/libavcodec/...) to back GStreamer, and a stock Debian ffprobe linked against them
+ * starts, prints its banner — and then SIGSEGVs the instant it opens a file, because their Yocto
+ * build is patched for hardware decode. So these are cross-built here, --disable-gpl (LGPL 2.1+),
+ * fully static, linking nothing of theirs. ffprobe carries no decoders at all: durations and stream
+ * geometry come from the container, which is why it is 1.8MB against ffmpeg's 5MB.
+ */
+const MEDIA_BIN_DIR = '/tmp/screentinker-bin';
+
+function stageMediaTools() {
+  const zlib = require('zlib');
+  const staged = [];
+  try {
+    fs.mkdirSync(MEDIA_BIN_DIR, { recursive: true });
+    for (const name of ['ffprobe', 'ffmpeg']) {
+      // Shipped in the payload for a real install; DATA_DIR is the fallback so a device can be
+      // given the tools without recutting the package.
+      const candidates = [path.join(__dirname, 'bin', name + '.gz'),
+                          path.join(DATA_DIR, 'bin', name + '.gz')];
+      const src = candidates.find((c) => fs.existsSync(c));
+      if (!src) continue;
+      const bytes = zlib.gunzipSync(fs.readFileSync(src));
+      const dest = path.join(MEDIA_BIN_DIR, name);
+      fs.writeFileSync(dest, bytes);
+      fs.chmodSync(dest, 0o755);
+      staged.push(name + ' ' + Math.round(bytes.length / 1024) + 'KB');
+    }
+    if (!staged.length) {
+      console.log('[media] no bundled ffprobe/ffmpeg found — thumbnails and durations stay disabled');
+      return;
+    }
+    // The server probes for these BY NAME with execFile, so the directory has to be on PATH before
+    // server.js is required. That is the whole reason this runs where it does.
+    process.env.PATH = MEDIA_BIN_DIR + (process.env.PATH ? ':' + process.env.PATH : '');
+    console.log('[media] staged ' + staged.join(', ') + ' into ' + MEDIA_BIN_DIR + ' (on PATH)');
+
+    // Prove it actually RUNS, and put the banner on the diagnostic screen and the serial console.
+    // Asynchronous: a hung binary must not hold up the server, and this is only reporting.
+    require('child_process').execFile(path.join(MEDIA_BIN_DIR, 'ffprobe'), ['-hide_banner', '-version'],
+      { timeout: 10000, encoding: 'utf8' }, (err, stdout) => {
+        if (err) {
+          console.warn('[media] staged ffprobe did not run: ' + (err && err.message));
+          return;
+        }
+        console.log('[media] ' + String(stdout).split('\n')[0]);
+      });
+  } catch (e) {
+    // Never fatal. A player with no thumbnails is worth more than a player that would not boot.
+    console.warn('[media] could not stage media tools: ' + (e && e.message ? e.message : e));
+  }
+}
+
 function startServer() {
   try {
+    stageMediaTools();
     require('./server/server.js');
   } catch (e) {
     remember('error', ['server failed to start', e && e.stack ? e.stack : String(e)]);
@@ -488,5 +559,7 @@ try {
 } catch (e) {
   remember('error', ['could not start the status listener', String(e && e.message ? e.message : e)]);
 }
+
+
 
 module.exports = { status };
