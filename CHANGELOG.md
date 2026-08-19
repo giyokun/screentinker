@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.39
+
+A single wording change, following feedback on the white-label work in 1.9.38.
+
+### Changed — the hide-branding toggle no longer names anyone
+
+In 1.9.38 the setting read `Hide "<your brand>" branding` on a white-labelled instance, because it
+was included in the brand substitution. That was backwards: the toggle hides the *platform's*
+attribution, not the operator's own name, so on an instance branded "Acme" it offered to hide Acme's
+branding.
+
+It now reads "Hide platform branding", and the equivalent in the six other translated languages.
+Nothing else changed.
+
+### Upgrading
+
+No migrations, no configuration changes. Nothing to do.
+
 ## 1.9.38
 
 A fix for anyone running the server on the display itself, and the white-label gaps a reseller
