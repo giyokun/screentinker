@@ -124,12 +124,18 @@ router.post('/users', (req, res) => {
   // nudge sweep already excludes them (they have a workspace_members row); we
   // additionally stamp both *_sent_at sentinels so any future sweep treats them
   // as already-handled. See services/signupEmails.js + services/activationNudge.js.
+    //
+    // email_verified = 1 for the same reason (#292). The column defaults to 0 and there is no
+    // verification flow for a user an ADMIN created - nobody sent them a link. On an instance with
+    // no SMTP configured that left them with a permanent "Please confirm your email address"
+    // banner they could not clear, fixable only by editing the database by hand. An address chosen
+    // by an administrator provisioning the account is as verified as this system can make it.
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
-        must_change_password, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, strftime('%s','now'), strftime('%s','now'))
+        must_change_password, email_verified, welcome_email_sent_at, activation_nudge_sent_at
+      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, strftime('%s','now'), strftime('%s','now'))
     `).run(id, email, name || email.split('@')[0], passwordHash, mustChangePassword ? 1 : 0);
 
     // Same membership footprint as an accepted invite: one workspace_members

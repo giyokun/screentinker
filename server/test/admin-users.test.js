@@ -31,6 +31,12 @@ db.exec(`
     plan_id TEXT DEFAULT 'free',
     email_alerts INTEGER DEFAULT 1,
     must_change_password INTEGER NOT NULL DEFAULT 0,
+    -- Mirrors the real schema, where this arrives as
+    --   ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0
+    -- The DEFAULT 0 is the whole point: it is what left admin-created users facing an
+    -- unclearable "confirm your email" banner (#292), so the fixture must carry the same
+    -- default or the fix cannot be tested here at all.
+    email_verified INTEGER NOT NULL DEFAULT 0,
     welcome_email_sent_at INTEGER,
     activation_nudge_sent_at INTEGER,
     last_login INTEGER,
@@ -184,6 +190,13 @@ test('platform_admin can create a user (201); response omits password/hash; memb
   assert.equal(mem.invited_by, 'u-admin');
   // HOSTED: excluded from welcome + activation-nudge lifecycle.
   assert.ok(row.welcome_email_sent_at && row.activation_nudge_sent_at, 'lifecycle sentinels stamped');
+  /*
+   * ...and verified, for the same reason (#292). Nobody ever sent this person a link - an
+   * administrator typed their address in. Left at the schema default of 0 they saw a
+   * "Please confirm your email address" banner they could not dismiss, and on an instance
+   * with no SMTP configured could never clear; operators were fixing it by hand in the DB.
+   */
+  assert.equal(row.email_verified, 1, 'an admin-created user must not be asked to verify');
   // Audit row written, never the password.
   const audit = db.prepare("SELECT * FROM activity_log WHERE action='admin_create_user'").get();
   assert.ok(audit && /created@test\.local/.test(audit.details));

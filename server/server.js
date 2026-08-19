@@ -1480,13 +1480,42 @@ function logOtaCheck(deviceId, client, latest, available, reason) {
 const otaDownloadGuard = require('./lib/ota-download-guard');
 const otaDownloadState = otaDownloadGuard.prodState();   // #146 P3.8: shared singleton so /api/status can read stats
 
+/*
+ * What a downloaded APK is called on the recipient's disk.
+ *
+ * ⚠️ THIS IS A COMMERCIAL LEAK, not a cosmetic one (#292). Partners resell this platform under
+ * their own brand; a file that saves as "ScreenTinker.apk" tells their customer exactly what the
+ * upstream product is and where to get it directly.
+ *
+ * Resolved by DOMAIN rather than by workspace, because /download/apk is unauthenticated — there is
+ * no token and so no workspace to read. A reseller serves from their own hostname, which is exactly
+ * what resolveBranding keys on, and anything unrecognised falls back to the platform default.
+ *
+ * ⚠️ SANITISED TO A WHITELIST, not merely escaped. brand_name is operator-supplied text landing in a
+ * response header: a quote or a newline in it would let the value break out of the header and inject
+ * another one. Only characters that are safe in both a filename and a header survive.
+ */
+function apkDownloadName(req) {
+  let brand = 'ScreenTinker';
+  try {
+    // ⚠️ Required HERE, matching the other call sites in this file — it is not a module-scope
+    // import. Referencing it as a free variable throws a ReferenceError that this very try/catch
+    // would swallow, leaving the download named "ScreenTinker.apk" forever with nothing logged:
+    // a feature that looks implemented and silently does nothing.
+    const { resolveBranding } = require('./lib/branding');
+    const row = resolveBranding(db, { domain: (req.hostname || '').toString() });
+    if (row && row.brand_name) brand = row.brand_name;
+  } catch (e) { /* branding is best-effort; the download matters more */ }
+  return require('./lib/brand-filename').brandToFilenameStem(brand) + '.apk';
+}
+
 app.get('/download/apk', (req, res) => {
   // Serve the slot the check advertised. If these disagree the client is handed bytes whose
   // size does not match apk_size, which is how an OTA loop starts — so both sides resolve
   // the channel the same way, and both fall back to stable identically.
   const apk = apkCache.forChannel(req.query.channel === 'beta' ? 'beta' : 'stable');
   if (!apk.exists) {
-    return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Not Available — ScreenTinker</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:480px;padding:32px 24px}h1{color:#f87171;font-size:22px;margin:0 0 8px}p{line-height:1.6;color:#94a3b8;font-size:14px;margin:0 0 20px}code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px}a{color:#3b82f6;text-decoration:none}a:hover{text-decoration:underline}.btn{display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}.btn:hover{background:#1d4ed8;text-decoration:none}.muted{font-size:12px;color:#64748b}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet.</p><a class="btn" href="https://github.com/screentinker/screentinker/releases/latest" target="_blank" rel="noopener">&#128230; Download from GitHub Releases</a><p class="muted">Self-hosting? Mount a built APK at <code>/data/ScreenTinker.apk</code> to serve it from this instance. Or use the <a href="/player">web player</a> instead.</p></div></body></html>`);
+    return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Not Available</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:480px;padding:32px 24px}h1{color:#f87171;font-size:22px;margin:0 0 8px}p{line-height:1.6;color:#94a3b8;font-size:14px;margin:0 0 20px}code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px}a{color:#3b82f6;text-decoration:none}a:hover{text-decoration:underline}.btn{display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}.btn:hover{background:#1d4ed8;text-decoration:none}.muted{font-size:12px;color:#64748b}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet.</p><a class="btn" href="https://github.com/screentinker/screentinker/releases/latest" target="_blank" rel="noopener">&#128230; Download from GitHub Releases</a><p class="muted">Self-hosting? Mount a built APK at <code>/data/ScreenTinker.apk</code> to serve it from this instance. Or use the <a href="/player">web player</a> instead.</p></div></body></html>`);
   }
 
   const verdict = otaDownloadGuard.admit(otaDownloadState, getBand());
@@ -1502,7 +1531,7 @@ app.get('/download/apk', (req, res) => {
   const release = () => { if (released) return; released = true; otaDownloadGuard.release(otaDownloadState); };
   res.on('finish', release); res.on('close', release);
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="ScreenTinker.apk"');
+  res.setHeader('Content-Disposition', `attachment; filename="${apkDownloadName(req)}"`);
   res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(apk.path, (err) => { if (err) release(); });
 });

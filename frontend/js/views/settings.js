@@ -266,7 +266,7 @@ export async function render(container) {
     <div class="settings-section">
       <h3>${t('settings.about')}</h3>
       <div style="color:var(--text-secondary);font-size:13px">
-        <p><strong>ScreenTinker</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
+        <p><strong>${esc(window.__ST_BRAND_NAME || 'ScreenTinker')}</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
         <p style="margin-top:4px">${t('settings.about_tagline')}</p>
         <p style="margin-top:12px">
           <a href="/legal/terms.html" target="_blank" style="color:var(--accent);font-size:12px">${t('auth.terms')}</a>
