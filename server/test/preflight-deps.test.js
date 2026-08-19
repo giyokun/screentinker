@@ -61,6 +61,15 @@ test('the preflight uses only Node builtins', () => {
   for (const r of requires) {
     // better-sqlite3 is the thing being TESTED for loadability, not a dependency of this file.
     if (r === 'better-sqlite3') continue;
+    /*
+     * A `node:`-prefixed specifier can ONLY resolve to a builtin - that is what the prefix is for -
+     * so it can never be the missing package this file exists to diagnose.
+     *
+     * `node:sqlite` arrives here as the fallback-driver probe. Note it is genuinely ABSENT on Node
+     * 20 and flagged-off on 22.x, which is exactly why preflight requires it inside a try/catch and
+     * treats the throw as an answer rather than an error.
+     */
+    if (r.startsWith('node:')) continue;
     assert.ok(builtins.has(r) || r.startsWith('.'), `preflight must not depend on ${r}`);
   }
 });

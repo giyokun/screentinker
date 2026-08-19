@@ -15,7 +15,7 @@
 const path = require('path');
 const SERVER_DIR = path.resolve(__dirname, '..', 'server');
 process.chdir(SERVER_DIR);
-const Database = require(require.resolve('better-sqlite3', { paths: [SERVER_DIR] }));
+const { Database } = require(path.join(SERVER_DIR, 'db', 'sqlite-driver.js'));
 const config = require(path.join(SERVER_DIR, 'config'));
 
 const PRE  = path.resolve(SERVER_DIR, 'db', 'remote_display.pre-multitenancy.db');

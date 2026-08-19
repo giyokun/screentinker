@@ -91,6 +91,42 @@ function nativeModuleBroken() {
   }
 }
 
+/*
+ * Can this host use Node's built-in driver instead?
+ *
+ * ⚠️ NODE 24 IN PRACTICE. node:sqlite is only usable without a flag from Node 23.4 onwards; on the
+ * 22.x line — which is this project's declared floor — it exists ONLY behind --experimental-sqlite,
+ * so a 22.x server started normally has no built-in driver at all.
+ *
+ * Hence a probe rather than a version comparison: `require` answers what this exact process can do,
+ * including the 22.x-with-the-flag case, and cannot be fooled by a floor that says 22.9 while the
+ * player it has to serve runs 24.15.
+ */
+function nodeSqliteAvailable() {
+  try { require('node:sqlite'); return true; } catch { return false; }
+}
+
+/*
+ * Is attempting a rebuild the right move, rather than falling back?
+ *
+ * Yes when there is no built-in driver to fall back TO — then a broken native module is fatal and
+ * the existing loud failure is exactly right. Yes when a toolchain is present, because the native
+ * driver is faster and is what production runs, so a repairable install should be repaired.
+ *
+ * No on a host with node:sqlite and no compiler: that is a player, and `npm rebuild` there is a
+ * five-minute node-gyp failure ending in a server that never starts.
+ */
+function canRebuildNative() {
+  // Explicitly asked for the built-in driver: nothing to rebuild, whatever the host has.
+  if (String(process.env.ST_SQLITE_DRIVER || '').trim().startsWith('node')) return false;
+  if (!nodeSqliteAvailable()) return true;
+  for (const bin of ['python3', 'make', 'g++']) {
+    try { execFileSync(bin, ['--version'], { stdio: 'ignore', timeout: 5000 }); }
+    catch { return false; }
+  }
+  return true;
+}
+
 function run(args, label) {
   console.log(`[preflight] ${label}: npm ${args.join(' ')}`);
   execFileSync('npm', args, { cwd: SERVER_DIR, stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS });
@@ -169,7 +205,21 @@ function preflight() {
     console.log('[preflight] dependencies installed.');
   }
 
+  /*
+   * ⚠️ A HOST WITH NO NATIVE MODULE IS NOT A BROKEN HOST ANY MORE.
+   *
+   * db/sqlite-driver.js falls back to node:sqlite when better-sqlite3 is absent or unloadable, which
+   * is how the server runs on a BrightSign player: no compiler, no node-gyp, no prebuild for aarch64.
+   * Rebuilding — let alone failing the boot — would be wrong there, so if the built-in driver can
+   * serve, say so and carry on. Where a toolchain DOES exist the native module is still preferred and
+   * still repaired, because it is faster and it is what production runs.
+   */
   const nativeProblem = nativeModuleBroken();
+  if (nativeProblem && !canRebuildNative()) {
+    console.log('[preflight] better-sqlite3 is unavailable; using the built-in node:sqlite driver.');
+    console.log(`[preflight]   ${String(nativeProblem).split('\n')[0]}`);
+    return;
+  }
   if (nativeProblem) {
     console.warn(`[preflight] better-sqlite3 will not load under Node ${process.version} — rebuilding.`);
     console.warn(`[preflight]   ${nativeProblem.split('\n')[0]}`);

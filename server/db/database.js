@@ -1,4 +1,4 @@
-const Database = require('better-sqlite3');
+const { Database } = require('./sqlite-driver');
 const fs = require('fs');
 const path = require('path');
 // NOT fs.copyFileSync: the data directory is exFAT on a player and copyFileSync's fchmod is

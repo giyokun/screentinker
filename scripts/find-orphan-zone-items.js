@@ -11,13 +11,7 @@
  * Exit code is always 0 (it's a report); the count is printed.
  */
 const path = require('path');
-let Database;
-try {
-  Database = require('better-sqlite3');
-} catch (e) {
-  // Resolve from the server's node_modules when run from the repo root.
-  Database = require(path.join(__dirname, '..', 'server', 'node_modules', 'better-sqlite3'));
-}
+const { Database } = require(path.join(__dirname, '..', 'server', 'db', 'sqlite-driver.js'));
 
 const dbPath = process.argv[2] || path.join(__dirname, '..', 'server', 'db', 'remote_display.db');
 const db = new Database(dbPath, { readonly: true });

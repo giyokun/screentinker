@@ -42,6 +42,46 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # ⚠️ THE PLAYER'S DATABASE LAYER, ACTUALLY EXECUTED.
+  #
+  # db/sqlite-driver.js picks better-sqlite3 when it loads and node:sqlite otherwise. The job above
+  # only ever exercises the first branch, and the second is what every BrightSign player runs — the
+  # package used to be MANUFACTURED by the packager, so its database layer shipped having never been
+  # run by any test. That is the same shape as the TELEMETRY_COLLECTOR crash that took production
+  # down with 1676 tests green.
+  #
+  # Node 24 because node:sqlite is unflagged only from 23.4; on 22.x it needs --experimental-sqlite
+  # and on the 20.x the job above uses it does not exist at all. --omit=optional installs the tree
+  # the way the payload is built, so the fallback is reached the same way it is on a player rather
+  # than by an env var alone.
+  unit-node-sqlite:
+    name: Unit tests (node:sqlite fallback, Node 24)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --omit=optional
+      - name: Assert the native driver really is absent
+        run: |
+          if [ -e node_modules/better-sqlite3 ]; then
+            echo "better-sqlite3 is installed — this job would silently test the WRONG driver" >&2
+            exit 1
+          fi
+      - name: Confirm the fallback is the one selected
+        run: |
+          node -e "const d=require('./db/sqlite-driver'); console.log(d.driverName);
+                   if (d.driverName !== 'node:sqlite') { console.error('expected the fallback'); process.exit(1); }"
+      - run: npm test
+
   openapi:
     name: OpenAPI spec lint
     runs-on: ubuntu-latest

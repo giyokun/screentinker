@@ -8,7 +8,7 @@
 // while the main connection writes is safe.
 const { workerData, parentPort } = require('worker_threads');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const { Database } = require('./sqlite-driver');
 
 const { dbPath, intervalMs, highWaterBytes, starvationRuns, starvationFloorBytes, escalateCooldownMs } = workerData;
 

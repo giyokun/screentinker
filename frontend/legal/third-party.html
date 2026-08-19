@@ -38,7 +38,9 @@
         <tr><td>better-sqlite3</td><td>MIT</td><td>SQLite database driver</td></tr>
         <tr><td>Multer</td><td>MIT</td><td>File upload handling</td></tr>
         <tr><td>uuid</td><td>MIT</td><td>Unique ID generation</td></tr>
-        <tr><td>Sharp</td><td>Apache 2.0</td><td>Image processing and thumbnails</td></tr>
+        <tr><td>Jimp</td><td>MIT</td><td>Image processing and thumbnails</td></tr>
+        <tr><td>@jsquash/webp, @jsquash/avif</td><td>Apache 2.0</td><td>WebP / AVIF encoding</td></tr>
+        <tr><td>FFmpeg (ffprobe, ffmpeg)</td><td>LGPL 2.1 or later</td><td>Video duration, dimensions and thumbnails. Bundled as unmodified binaries with the BrightSign player package only; built from unmodified FFmpeg 7.1.1 sources configured <code>--disable-gpl</code>, so no GPL component (including libpostproc) is included.</td></tr>
         <tr><td>cors</td><td>MIT</td><td>Cross-origin resource sharing</td></tr>
         <tr><td>bcryptjs</td><td>MIT</td><td>Password hashing</td></tr>
         <tr><td>jsonwebtoken</td><td>MIT</td><td>JWT authentication tokens</td></tr>
@@ -81,9 +83,31 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.</div>
 
+    <h2>GNU Lesser General Public License v2.1</h2>
+    <p>
+      The BrightSign player package bundles two FFmpeg command-line programs, <code>ffprobe</code>
+      and <code>ffmpeg</code>, used to read the duration and dimensions of uploaded video and to
+      generate thumbnails. They are built from unmodified FFmpeg 7.1.1 sources
+      (<a href="https://ffmpeg.org/">ffmpeg.org</a>) and are licensed under the GNU Lesser General
+      Public License, version 2.1 or later.
+    </p>
+    <p>
+      They are configured with <code>--disable-gpl</code>, so no GPL-licensed FFmpeg component is
+      present — including <code>libpostproc</code>, which is GPL-only. No FFmpeg source was modified.
+    </p>
+    <p>
+      <strong>Written offer.</strong> These binaries are statically linked. On request we will supply
+      the complete corresponding source, the exact <code>configure</code> arguments used, and the
+      object files needed to relink the programs against a modified version of the library, as
+      section 6 of the LGPL requires. Contact <a href="mailto:support@screentinker.com">support@screentinker.com</a>.
+      The full licence text is at
+      <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html">gnu.org/licenses/lgpl-2.1</a>,
+      and a copy ships beside the binaries in the player package.
+    </p>
+
     <h2>Apache License 2.0</h2>
     <p>The following packages are licensed under the Apache License, Version 2.0:</p>
-    <p>Sharp, google-auth-library, OkHttp, Gson, AndroidX Media3/ExoPlayer, AndroidX libraries, Material Components for Android, Kotlin Coroutines, AndroidX Security Crypto, AndroidX WorkManager</p>
+    <p>@jsquash/webp, @jsquash/avif, google-auth-library, OkHttp, Gson, AndroidX Media3/ExoPlayer, AndroidX libraries, Material Components for Android, Kotlin Coroutines, AndroidX Security Crypto, AndroidX WorkManager</p>
     <div class="license-block">Apache License
 Version 2.0, January 2004
 http://www.apache.org/licenses/

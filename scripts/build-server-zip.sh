@@ -125,68 +125,62 @@ if [ "$PAYLOAD_ONLY" = 1 ]; then
     cp "$src" "$STAGE/bin/$tool.gz"
     echo "    bin/$tool.gz ($(du -h "$src" | cut -f1))"
   done
+  # ⚠️ THE LICENCE TRAVELS WITH THE BINARIES. These are LGPL 2.1 and statically linked, so the
+  # package that carries them has to carry the licence text too — a link on a website is not the
+  # same thing as the copy the licence asks to accompany the work.
+  if [ ! -f brightsign/media-tools/COPYING.LGPLv2.1 ]; then
+    echo "ERROR: brightsign/media-tools/COPYING.LGPLv2.1 is missing — LGPL binaries cannot ship without it." >&2
+    exit 1
+  fi
+  cp brightsign/media-tools/COPYING.LGPLv2.1 "$STAGE/bin/COPYING.LGPLv2.1"
+  cp brightsign/media-tools/README.md        "$STAGE/bin/README.md"
+  echo "    bin/COPYING.LGPLv2.1 + bin/README.md"
 fi
 
-# Point the server at the built-in driver. The shim is API-compatible, so no call site changes —
-# this rewires the two places that construct a Database and drops the dependency entirely.
-echo "  switching to node:sqlite..."
+# The player has no compiler, so the package must not carry better-sqlite3.
+#
+# NOTHING IS REWRITTEN HERE ANY MORE. db/sqlite-driver.js chooses at RUNTIME - native if it loads,
+# node:sqlite otherwise - so the payload is main's code, unmodified. It used to be manufactured: this
+# script dropped the dependency and then installed db/sqlite-compat.js into node_modules UNDER THE
+# NAME better-sqlite3, which worked and shipped a database layer no test had ever executed.
+#
+# All that is left is to not install the native module. It is an optionalDependency, so
+# `npm install --omit=optional` leaves it out and the runtime fallback does the rest.
+echo "  omitting the native sqlite driver (runtime fallback handles it)..."
 python3 - "$STAGE" <<'PY'
 import json, os, sys
 stage = sys.argv[1]
 root = os.path.join(stage, 'server')
 
-# The rewire is worthless without the shim itself. It is a TRACKED source file, so if it is missing
-# the staging step never saw it — which happened once because it had been written but not `git
-# add`ed, and the only symptom was the server refusing to start with "Cannot find module
-# './sqlite-compat.js'".
-shim = os.path.join(root, 'db', 'sqlite-compat.js')
-if not os.path.exists(shim):
-    sys.exit("ERROR: server/db/sqlite-compat.js is not in the staged tree — is it committed to git?")
-
-# NOTHING IS REWRITTEN. The shim is installed UNDER THE NAME better-sqlite3 after npm runs (see
-# below), so every require resolves to it by construction.
-#
-# Rewriting the requires textually was the obvious approach and it does not work: scripts/ reaches
-# for the module three DYNAMIC ways —
-#     require(resolveFromServer('better-sqlite3'))
-#     require(require.resolve('better-sqlite3', { paths: [SERVER_DIR] }))
-#     require(path.join(__dirname, '..', 'server', 'node_modules', 'better-sqlite3'))
-# — none of which a string sweep can see. The first is in migrate-multitenancy.js, which runs during
-# first boot, so the miss surfaced as "Migration FAILED" with a half-migrated database long after
-# the server appeared to start cleanly.
+# The fallback is worthless without the shim and the chooser. Both are TRACKED source files, so if
+# either is missing the staging step never saw it - which happened once because sqlite-compat.js had
+# been written but not `git add`ed, and the only symptom was the server refusing to start with
+# "Cannot find module './sqlite-compat.js'".
+for required in ('sqlite-compat.js', 'sqlite-driver.js'):
+    if not os.path.exists(os.path.join(root, 'db', required)):
+        sys.exit("ERROR: server/db/%s is not in the staged tree - is it committed to git?" % required)
 
 pkg = os.path.join(root, 'package.json')
 d = json.load(open(pkg))
+if 'better-sqlite3' in d.get('optionalDependencies', {}):
+    del d['optionalDependencies']['better-sqlite3']
+    if not d['optionalDependencies']:
+        del d['optionalDependencies']
+    print("    dropped better-sqlite3 (the player falls back to node:sqlite)")
 if 'better-sqlite3' in d.get('dependencies', {}):
-    del d['dependencies']['better-sqlite3']
-    print("    dropped better-sqlite3 from dependencies")
-# The player has Node 24; say so, so an accidental install on anything older fails loudly.
+    sys.exit("ERROR: better-sqlite3 is a hard dependency again - the player cannot build native code.")
+# The player has Node 24, and node:sqlite is unflagged only from 23.4 - on 22.x it needs
+# --experimental-sqlite and the fallback would not load. Say so, so an install on anything older
+# fails loudly rather than at the first query.
 d['engines'] = {'node': '>=24.0.0'}
 json.dump(d, open(pkg, 'w'), indent=2)
 PY
 
 echo "  installing production dependencies..."
-( cd "$STAGE/server" && rm -f package-lock.json && npm install --omit=dev --no-audit --no-fund --silent )
+( cd "$STAGE/server" && rm -f package-lock.json && npm install --omit=dev --omit=optional --no-audit --no-fund --silent )
 
 # THE INVARIANT. A single .node file here means the package cannot run on the player, and the way
 # you would find out is a boot loop on a box with no console.
-# Install the façade under the real package's name. Done AFTER npm so nothing can overwrite it.
-echo "  installing the node:sqlite shim as better-sqlite3..."
-mkdir -p "$STAGE/server/node_modules/better-sqlite3"
-printf '%s\n' \
-  '{' \
-  '  "name": "better-sqlite3",' \
-  '  "version": "0.0.0-node-sqlite-shim",' \
-  '  "description": "Not the real better-sqlite3 - a facade over node:sqlite so this bundle carries no native code.",' \
-  '  "main": "index.js"' \
-  '}' > "$STAGE/server/node_modules/better-sqlite3/package.json"
-printf '%s\n' \
-  '// Every require of better-sqlite3 in this bundle lands here, in whatever form it was written:' \
-  "// plain, require.resolve with paths, or an absolute path into node_modules." \
-  "module.exports = require('../../db/sqlite-compat.js');" \
-  > "$STAGE/server/node_modules/better-sqlite3/index.js"
-echo "    stub installed"
-
 # ⚠️ ESM-ONLY PACKAGES DO NOT WORK INSIDE THE WIDGET.
 #
 # The player runs the server inside an Electron roHtmlWidget, and Electron's module loader does NOT
@@ -308,11 +302,21 @@ if find "$STAGE" -name '*.node' -print -quit | grep -q .; then
   find "$STAGE" -name '*.node' | sed 's/^/    /' >&2
   exit 1
 fi
-if ! grep -q "node-sqlite-shim" "$STAGE/server/node_modules/better-sqlite3/package.json" 2>/dev/null; then
-  echo "ERROR: better-sqlite3 is the REAL package, not the shim — npm must have reinstalled it." >&2
+# The native module must be ABSENT, not shimmed. If npm reinstalled it (a stray `dependencies`
+# entry, a transitive requirement) the .node check above would usually catch it - but a
+# prebuild-less install can leave the JS half on disk with no binary, which loads fine here and
+# fails on the player at the first query.
+if [ -e "$STAGE/server/node_modules/better-sqlite3" ]; then
+  echo "ERROR: better-sqlite3 is present in the bundle — the player has no compiler for it." >&2
   exit 1
 fi
-echo "    no .node binaries, better-sqlite3 is the shim — portable"
+for f in db/sqlite-driver.js db/sqlite-compat.js; do
+  if [ ! -f "$STAGE/server/$f" ]; then
+    echo "ERROR: server/$f missing — the runtime fallback to node:sqlite cannot work." >&2
+    exit 1
+  fi
+done
+echo "    no .node binaries, no better-sqlite3, node:sqlite fallback present — portable"
 
 # THE SECOND INVARIANT, and the one that matters more. This package gets copied onto hardware that
 # leaves the building. The first build of it contained a real 33MB customer database, 105MB of
@@ -363,7 +367,7 @@ echo "$LISTING" | tail -1 | sed 's/^/    /'
 REQUIRED="autorun.brs autozip.brs bs-server-boot.js node-server.html"
 # The payload is verified on the thing the installer actually looks for before it commits the
 # extraction. An archive that unpacks perfectly and lacks this is the failure worth catching here.
-[ "$PAYLOAD_ONLY" = 1 ] && REQUIRED="server/server.js bin/ffprobe.gz bin/ffmpeg.gz"
+[ "$PAYLOAD_ONLY" = 1 ] && REQUIRED="server/server.js bin/ffprobe.gz bin/ffmpeg.gz bin/COPYING.LGPLv2.1"
 for required in $REQUIRED; do
   case "$LISTING" in
     *" $required"*) ;;
