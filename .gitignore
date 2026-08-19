@@ -1,5 +1,10 @@
 # Dependencies
 node_modules/
+# No trailing slash as well: `node_modules/` matches DIRECTORIES only, so a SYMLINK named
+# node_modules is not ignored by it. That is not hypothetical - an absolute, self-referential
+# `server/node_modules -> /home/.../server/node_modules` was committed in the #283 merge and broke
+# the payload build with "cp: Too many levels of symbolic links".
+node_modules
 
 # Databases: SQLite files, WAL/SHM sidecars, and any .db.<suffix> backups
 # (e.g. .db.devbak), anywhere in the tree - never commit a database.
