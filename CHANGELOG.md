@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.9.37
+
+Two fixes worth upgrading for on their own, and a change to how the server picks its database driver.
+
+### Fixed — the password box disappeared while you were creating the first account
+
+On a brand-new install with no users yet, typing an email address into the sign-in form made the
+password field vanish and the button change to "Next". There was no way to finish creating the first
+account, which is the only thing a fresh install can do.
+
+The cause was the identifier-first sign-in flow, which asks the server which provider an address uses
+before offering a credential. That question has no meaning when the user table is empty — there is
+nobody to identify, the operator is creating the first account — but the "you edited the address, go
+back a step" handler still fired on the first keystroke and took the password field with it.
+
+First-run setup now ignores that flow entirely rather than being initialised into a state a later
+keystroke could undo, and the decision about what the form shows lives in one place instead of two
+mutable flags updated from four listeners.
+
+**If you are installing on your own hardware, this is the fix you want.** The bug only appears before
+the first account exists, so it never shows up on an established server — and it made a first install
+look broken.
+
+### Fixed — a fresh checkout could not resolve the server's dependencies
+
+`server/node_modules` was committed as a symbolic link pointing at its own absolute path. Anything
+that followed it got a filesystem loop, so a fresh clone produced a server whose dependencies could
+not resolve, and building the BrightSign package failed outright. Only people working from the git
+repository were affected; released tarballs and Docker images were not.
+
+### Changed — the SQLite driver is now chosen when the server starts
+
+The server prefers `better-sqlite3`, as it always has, and falls back to Node's built-in
+`node:sqlite` when the native module is unavailable. `better-sqlite3` is therefore now an *optional*
+dependency.
+
+**Nothing changes for an ordinary install**: where the native module builds, it is used. What changes
+is that a host without a compiler — a player, a minimal container, a machine whose Node version moved
+— now starts on the built-in driver instead of failing, and the startup check no longer attempts a
+source rebuild it cannot complete there.
+
+Both drivers are run against the full test suite on every change, which was the real motivation: the
+player package used to be produced by rewriting the server at build time, so the database layer it
+shipped with had never been executed by any test.
+
+### Added — a BrightSign player can host the server
+
+A BrightSign XT245 can now run ScreenTinker itself, serving the displays around it, with the setup
+address on screen until the first account exists and the player taking over afterwards. It is opt-in
+per device and off by default. Video thumbnails and durations work there too: the package carries
+`ffprobe` and `ffmpeg` built for the player.
+
+Those binaries are unmodified FFmpeg 7.1.1 under the LGPL, built without any GPL component, and the
+licence ships beside them. `legal/third-party.html` gains the corresponding notice — and drops Sharp,
+which it still listed although 1.9.34 replaced it.
+
+### Upgrading
+
+No migrations and no configuration changes.
+
+`scripts/upgrade.sh` needs no adjustment: `npm ci --omit=dev` still installs `better-sqlite3`, because
+optional dependencies are installed by default. To deliberately run on the built-in driver — Node 24
+or newer — set `ST_SQLITE_DRIVER=node`. Setting it to `better-sqlite3` makes a missing native module a
+startup error rather than a silent fallback, which is worth doing where you expect the native driver
+and want to be told if it is gone.
+
 ## 1.9.36
 
 A single fix. **1.9.36 replaces 1.9.35** — see below for whether that affects you.
